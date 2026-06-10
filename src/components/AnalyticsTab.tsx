@@ -1,0 +1,598 @@
+import React, { useEffect, useState, useRef } from 'react';
+import { PerformanceLog, PostDraft } from '../types';
+
+interface Props {
+  logsList: PerformanceLog[];
+  onRefetchLogs: () => void;
+}
+
+interface ParsedCSVPost {
+  url: string;
+  postId: string;
+  publishDate: number;
+  engagements: number;
+  pillar: string;
+  title: string;
+  isMatched: boolean;
+  matchedDraftId?: string;
+}
+
+export default function AnalyticsTab({ logsList, onRefetchLogs }: Props) {
+  const [selectedLog, setSelectedLog] = useState<PerformanceLog | null>(null);
+  const [impressions, setImpressions] = useState(0);
+  const [reactions, setReactions] = useState(0);
+  const [comments, setComments] = useState(0);
+  const [reposts, setReposts] = useState(0);
+  const [profileViews, setProfileViews] = useState(0);
+  const [notes, setNotes] = useState('');
+  const [updating, setUpdating] = useState(false);
+
+  // CSV State
+  const [parsedPosts, setParsedPosts] = useState<ParsedCSVPost[]>([]);
+  const [csvFileName, setCsvFileName] = useState('');
+  const [importingCSV, setImportingCSV] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Load drafts to match CSV against
+  const [allDrafts, setAllDrafts] = useState<PostDraft[]>([]);
+
+  useEffect(() => {
+    fetch('/api/drafts')
+      .then(res => res.json())
+      .then(data => setAllDrafts(data))
+      .catch(err => console.error(err));
+  }, [logsList]);
+
+  const handleEditOpen = (log: PerformanceLog) => {
+    setSelectedLog(log);
+    setImpressions(log.impressions || 0);
+    setReactions(log.reactions || 0);
+    setComments(log.comments || 0);
+    setReposts(log.reposts || 0);
+    setProfileViews(log.profileViews || 0);
+    setNotes(log.notes || '');
+  };
+
+  const handleUpdateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedLog) return;
+    setUpdating(true);
+
+    const updatedLog: PerformanceLog = {
+      ...selectedLog,
+      impressions: Number(impressions),
+      reactions: Number(reactions),
+      comments: Number(comments),
+      reposts: Number(reposts),
+      profileViews: Number(profileViews),
+      notes: notes,
+      updatedAt: Date.now()
+    };
+
+    try {
+      const response = await fetch('/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedLog)
+      });
+
+      if (!response.ok) throw new Error('Failed to update metrics');
+      setSelectedLog(null);
+      onRefetchLogs();
+    } catch (err) {
+      console.error(err);
+      alert('Error updating metrics');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  // CSV parsing & ID extraction engine
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setCsvFileName(file.name);
+    const reader = new FileReader();
+
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (!text) return;
+
+      try {
+        // Split by lines
+        const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+        if (lines.length < 2) throw new Error('CSV is empty or lacks headers');
+
+        // Parse headers (handling potential quotes)
+        const headers = parseCSVLine(lines[0]);
+        const urlIdx = headers.findIndex(h => h.toLowerCase().includes('post url') || h.toLowerCase() === 'url');
+        const dateIdx = headers.findIndex(h => h.toLowerCase().includes('date') || h.toLowerCase().includes('publish'));
+        const engagementIdx = headers.findIndex(h => h.toLowerCase().includes('engagement') || h.toLowerCase().includes('reactions'));
+
+        if (urlIdx === -1) {
+          throw new Error("Could not find a 'Post URL' column in the CSV.");
+        }
+
+        const tempParsed: ParsedCSVPost[] = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          const cols = parseCSVLine(lines[i]);
+          if (cols.length < headers.length) continue; // skip incomplete rows
+
+          const rawUrl = cols[urlIdx]?.trim() || '';
+          if (!rawUrl.startsWith('http')) continue;
+
+          // 1. Extract 19-digit post ID URN using Regex
+          // Matches e.g. ugcPost-7464004903351382016 or share-7467735113334669312
+          const idMatch = rawUrl.match(/(?:ugcPost|share|activity|document|posts)-([0-9]{15,})/i) || rawUrl.match(/-([0-9]{15,})/);
+          const postId = idMatch ? idMatch[1] : '';
+          
+          if (!postId) continue; // skip if we cannot resolve a valid ID
+
+          // 2. Parse Publish Date
+          const rawDate = dateIdx > -1 ? cols[dateIdx] : '';
+          const publishDate = rawDate ? new Date(rawDate).getTime() : Date.now();
+
+          // 3. Parse Engagements
+          const rawEng = engagementIdx > -1 ? cols[engagementIdx].replace(/,/g, '') : '0';
+          const engagements = parseInt(rawEng) || 0;
+
+          // 4. Auto-classify Pillar from URL slug tokens
+          // e.g. antonio-gutierrez-data_dataquality-datagovernance...
+          let matchedPillar = 'General';
+          const urlLower = rawUrl.toLowerCase();
+          
+          // Map keywords to standard pillars
+          if (urlLower.includes('quality') || urlLower.includes('governance')) {
+            matchedPillar = 'Data Quality vs Data Volume';
+          } else if (urlLower.includes('ollama') || urlLower.includes('agent') || urlLower.includes('llm')) {
+            matchedPillar = 'Local LLMs & AI Agents';
+          } else if (urlLower.includes('architecture') || urlLower.includes('design') || urlLower.includes('fabric')) {
+            matchedPillar = 'System Design & Architecture';
+          }
+
+          // 5. Generate a human-readable title snippet from the URL slug
+          const slugMatch = rawUrl.match(/posts\/([a-zA-Z0-9\-_]+)/);
+          const slug = slugMatch ? slugMatch[1] : '';
+          const cleanedTitle = slug
+            .replace(/^antoniogutierrez-data_/i, '')
+            .replace(/-(?:ugcPost|share|activity|document).*$/i, '')
+            .split('_')
+            .join(' ')
+            .split('-')
+            .join(' ');
+          
+          const title = cleanedTitle.substring(0, 40) + (cleanedTitle.length > 40 ? '...' : '');
+
+          // 6. Reconcile against existing drafts
+          const matchedDraft = allDrafts.find(d => 
+            (d.linkedinPostId && d.linkedinPostId.includes(postId)) ||
+            (d.content && d.content.toLowerCase().includes(postId))
+          );
+
+          tempParsed.push({
+            url: rawUrl,
+            postId,
+            publishDate,
+            engagements,
+            pillar: matchedPillar,
+            title: title || `LinkedIn Share #${postId.substring(0, 6)}`,
+            isMatched: !!matchedDraft,
+            matchedDraftId: matchedDraft?.id
+          });
+        }
+
+        setParsedPosts(tempParsed);
+      } catch (err: any) {
+        alert(`Failed to parse CSV: ${err.message}`);
+        setParsedPosts([]);
+      }
+    };
+
+    reader.readAsText(file);
+  };
+
+  // Helper to correctly parse CSV lines handling quotes
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = [];
+    let curVal = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(curVal.replace(/^"|"$/g, ''));
+        curVal = '';
+      } else {
+        curVal += char;
+      }
+    }
+    result.push(curVal.replace(/^"|"$/g, ''));
+    return result;
+  };
+
+  // Submit bulk reconciliation to backend
+  const handleConfirmImport = async () => {
+    if (parsedPosts.length === 0) return;
+    setImportingCSV(true);
+
+    // Prepare drafts to update status
+    const draftsToUpdate = parsedPosts
+      .filter(p => p.isMatched && p.matchedDraftId)
+      .map(p => ({
+        id: p.matchedDraftId!,
+        status: 'posted' as const,
+        postedAt: p.publishDate,
+        linkedinPostId: p.postId
+      }));
+
+    // Prepare performance logs to insert or update
+    const logsToInsert = parsedPosts.map(p => ({
+      sourceDraftId: p.matchedDraftId || undefined,
+      postTitle: p.title,
+      postedAt: p.publishDate,
+      pillar: p.pillar,
+      format: p.url.includes('document') ? ('data' as const) : ('insight' as const),
+      impressions: p.engagements * 12, // estimate impressions based on engagements multiplier if views not provided
+      reactions: p.engagements,
+      comments: 0,
+      reposts: 0,
+      profileViews: 0,
+      notes: `Reconciled via CSV Upload. ID: ${p.postId}`
+    }));
+
+    try {
+      const response = await fetch('/api/logs/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          logs: logsToInsert,
+          drafts: draftsToUpdate
+        })
+      });
+
+      if (!response.ok) throw new Error('Bulk import reconciliation failed');
+
+      alert(`Successfully reconciled ${draftsToUpdate.length} drafts and imported ${logsToInsert.length} performance logs!`);
+      setParsedPosts([]);
+      setCsvFileName('');
+      onRefetchLogs();
+    } catch (err: any) {
+      console.error(err);
+      alert(`Error during bulk import: ${err.message}`);
+    } finally {
+      setImportingCSV(false);
+    }
+  };
+
+  // Aggregated data by content pillar for CSS chart
+  const getPillarData = () => {
+    const dataMap: Record<string, { impressions: number, engagement: number, count: number }> = {};
+    
+    logsList.forEach(log => {
+      const p = log.pillar || 'General';
+      if (!dataMap[p]) {
+        dataMap[p] = { impressions: 0, engagement: 0, count: 0 };
+      }
+      dataMap[p].impressions += log.impressions || 0;
+      dataMap[p].engagement += (log.reactions || 0) + (log.comments || 0) + (log.reposts || 0);
+      dataMap[p].count += 1;
+    });
+
+    return Object.entries(dataMap).map(([name, val]) => ({
+      name,
+      impressions: val.impressions,
+      engagement: val.engagement,
+      avgEngagement: val.count > 0 ? Math.round(val.engagement / val.count) : 0
+    }));
+  };
+
+  const pillarChartData = getPillarData();
+  const maxImpressions = Math.max(...pillarChartData.map(d => d.impressions), 1);
+  const maxEngagement = Math.max(...pillarChartData.map(d => d.avgEngagement), 1);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      
+      {/* Metrics Editor Modal */}
+      {selectedLog && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+          <div className="card-panel" style={{ width: '100%', maxWidth: '600px', background: 'var(--bg-color)', border: '1px solid rgba(99, 102, 241, 0.4)' }}>
+            <h3 style={{ fontSize: '1.2rem', fontWeight: '700', marginBottom: '1.5rem' }}>Update Post Performance</h3>
+            
+            <form onSubmit={handleUpdateSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Impressions (Views)</label>
+                  <input 
+                    type="number" 
+                    className="form-input" 
+                    value={impressions} 
+                    onChange={e => setImpressions(Number(e.target.value))} 
+                    min="0"
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Reactions</label>
+                  <input 
+                    type="number" 
+                    className="form-input" 
+                    value={reactions} 
+                    onChange={e => setReactions(Number(e.target.value))} 
+                    min="0"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Comments</label>
+                  <input 
+                    type="number" 
+                    className="form-input" 
+                    value={comments} 
+                    onChange={e => setComments(Number(e.target.value))} 
+                    min="0"
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Reposts</label>
+                  <input 
+                    type="number" 
+                    className="form-input" 
+                    value={reposts} 
+                    onChange={e => setReposts(Number(e.target.value))} 
+                    min="0"
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Profile Views</label>
+                  <input 
+                    type="number" 
+                    className="form-input" 
+                    value={profileViews} 
+                    onChange={e => setProfileViews(Number(e.target.value))} 
+                    min="0"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Notes</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  value={notes} 
+                  onChange={e => setNotes(e.target.value)}
+                  placeholder="e.g. Discussed local LLM performance"
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-outline" onClick={() => setSelectedLog(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={updating}>
+                  {updating ? 'Saving...' : 'Save Metrics'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CSV Dropzone Panel */}
+      <div className="card-panel">
+        <h2 style={{ fontSize: '1.4rem', fontWeight: '700', marginBottom: '0.5rem' }}>Weekly CSV Performance Importer</h2>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+          Upload your weekly spreadsheet export to match generated drafts and sync engagements automatically.
+        </p>
+
+        <div 
+          onClick={() => fileInputRef.current?.click()}
+          style={{ 
+            border: '2px dashed var(--border-color)', 
+            borderRadius: '16px', 
+            padding: '2.5rem', 
+            textAlign: 'center', 
+            cursor: 'pointer',
+            background: 'rgba(255,255,255,0.01)',
+            transition: 'var(--transition-smooth)'
+          }}
+          onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.4)'}
+          onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border-color)'}
+        >
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleCSVUpload} 
+            accept=".csv" 
+            style={{ display: 'none' }} 
+          />
+          <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📂</div>
+          <div style={{ fontWeight: '600', marginBottom: '0.25rem' }}>
+            {csvFileName ? `Selected: ${csvFileName}` : 'Select or drag your CSV file here'}
+          </div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            Supports files with columns: "Post URL", "Post Publish Date", "Engagements"
+          </div>
+        </div>
+
+        {/* CSV Preview and Sync Board */}
+        {parsedPosts.length > 0 && (
+          <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>Reconciliation Board ({parsedPosts.length} posts found)</h3>
+              
+              <button 
+                className="btn btn-accent" 
+                onClick={handleConfirmImport} 
+                disabled={importingCSV}
+                style={{ padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
+              >
+                {importingCSV ? 'Importing...' : '⚡ Confirm & Sync Board'}
+              </button>
+            </div>
+
+            <div style={{ maxHeight: '250px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ background: 'rgba(10,15,30,0.6)', borderBottom: '1px solid var(--border-color)' }}>
+                    <th style={{ padding: '0.5rem 1rem' }}>Headline (URL Slug)</th>
+                    <th style={{ padding: '0.5rem 1rem' }}>Extracted URN</th>
+                    <th style={{ padding: '0.5rem 1rem' }}>Engagements</th>
+                    <th style={{ padding: '0.5rem 1rem' }}>Content Pillar</th>
+                    <th style={{ padding: '0.5rem 1rem' }}>Match Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parsedPosts.map((post, idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', background: post.isMatched ? 'rgba(16, 185, 129, 0.05)' : 'none' }}>
+                      <td style={{ padding: '0.5rem 1rem', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.title}</td>
+                      <td style={{ padding: '0.5rem 1rem', fontFamily: 'monospace' }}>{post.postId}</td>
+                      <td style={{ padding: '0.5rem 1rem', fontWeight: '700' }}>{post.engagements}</td>
+                      <td style={{ padding: '0.5rem 1rem' }}>{post.pillar}</td>
+                      <td style={{ padding: '0.5rem 1rem' }}>
+                        {post.isMatched ? (
+                          <span style={{ color: '#10b981', fontWeight: '600' }}>✓ Match Draft</span>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)' }}>+ Import History</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Visual Analytics Charts */}
+      {logsList.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+          
+          <div className="card-panel">
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>Total Impressions by Content Pillar</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Sum of views across all posts in each pillar</p>
+            
+            <div className="chart-container">
+              {pillarChartData.map(d => {
+                const pct = (d.impressions / maxImpressions) * 100;
+                return (
+                  <div key={d.name} className="chart-bar-wrapper">
+                    <div className="chart-bar" style={{ height: `${Math.max(pct, 4)}%` }}>
+                      <span className="chart-bar-value">{d.impressions.toLocaleString()}</span>
+                    </div>
+                    <span className="chart-bar-label">{d.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="card-panel">
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>Avg Engagement by Content Pillar</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Avg (Reactions + Comments + Reposts) per post</p>
+            
+            <div className="chart-container">
+              {pillarChartData.map(d => {
+                const pct = (d.avgEngagement / maxEngagement) * 100;
+                return (
+                  <div key={d.name} className="chart-bar-wrapper">
+                    <div className="chart-bar" style={{ height: `${Math.max(pct, 4)}%`, background: 'var(--accent-gradient)' }}>
+                      <span className="chart-bar-value">{d.avgEngagement}</span>
+                    </div>
+                    <span className="chart-bar-label">{d.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* Published Log List */}
+      <div className="card-panel">
+        <h2 style={{ fontSize: '1.4rem', fontWeight: '700', marginBottom: '1.5rem' }}>Published Content Logs</h2>
+
+        {logsList.length === 0 ? (
+          <div style={{ padding: '3rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+            No posts logged yet. Autopilot posts will automatically generate a log here once published!
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {logsList.sort((a,b) => b.postedAt - a.postedAt).map(log => {
+              const totalEngagement = (log.reactions || 0) + (log.comments || 0) + (log.reposts || 0);
+              
+              return (
+                <div 
+                  key={log.id} 
+                  style={{ 
+                    border: '1px solid var(--border-color)', 
+                    borderRadius: '12px', 
+                    padding: '1.25rem',
+                    background: 'rgba(255,255,255,0.01)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: '1rem'
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', flex: 1 }}>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                      <span className="chip chip-primary" style={{ textTransform: 'uppercase', fontSize: '0.7rem' }}>
+                        {log.pillar || 'General'}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {new Date(log.postedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <h4 style={{ fontSize: '0.95rem', fontWeight: '600', color: '#fff' }}>
+                      {log.postTitle}
+                    </h4>
+                    {log.notes && (
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        Notes: {log.notes}
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '1rem' }}>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Impressions</div>
+                        <div style={{ fontSize: '0.95rem', fontWeight: '700' }}>{log.impressions || 0}</div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Engagement</div>
+                        <div style={{ fontSize: '0.95rem', fontWeight: '700', color: '#3b82f6' }}>{totalEngagement}</div>
+                      </div>
+                    </div>
+
+                    <button 
+                      className="btn btn-outline" 
+                      onClick={() => handleEditOpen(log)}
+                      style={{ padding: '0.4rem 1rem', fontSize: '0.8rem' }}
+                    >
+                      ✏️ Update Metrics
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+    </div>
+  );
+}
