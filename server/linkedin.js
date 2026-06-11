@@ -15,7 +15,8 @@ export function setupLinkedInRoutes(app, db, saveDb) {
       return res.status(400).json({ error: 'LinkedIn Client ID not configured in settings.' });
     }
 
-    const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/linkedin/callback`;
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : req.protocol;
+    const redirectUri = `${protocol}://${req.get('host')}/api/auth/linkedin/callback`;
     const scopes = ['w_member_social', 'openid', 'profile', 'email'].join(' ');
     const state = Math.random().toString(36).substring(2) + Date.now();
     
