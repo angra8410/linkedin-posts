@@ -265,9 +265,6 @@ const saveDbShim = async () => {
 
 setupLinkedInRoutes(app, dbShim, saveDbShim);
 
-// Patch: after OAuth saves token to shim, reflect in Supabase immediately
-const _origSetup = setupLinkedInRoutes;
-
 // ── AUTOPILOT PIPELINE ────────────────────────────────────────────────────────
 app.post('/api/autopilot', async (req, res) => {
   const { topic, pillar, model, inputMode, postType } = req.body;
@@ -407,10 +404,25 @@ setInterval(async () => {
 
 // ── STATIC FRONTEND ───────────────────────────────────────────────────────────
 import { existsSync } from 'fs';
-const distPath = path.join(__dirname, '../dist');
+
+// process.cwd() resuelve de forma robusta la raíz en local (Windows) y en la nube (Linux /app)
+const distPath = path.resolve(process.cwd(), 'dist');
+
 if (existsSync(distPath)) {
+  console.log(`[Server] Directorio de frontend estático detectado en: ${distPath}`);
+  
+  // Servir archivos compilados por Vite (HTML, JS, CSS)
   app.use(express.static(distPath));
-  app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+  
+  // Enrutar cualquier otra petición SPA hacia el index.html de React
+  app.get('*', (req, res) => {
+    if (req.url.startsWith('/api')) {
+      return res.status(404).json({ error: 'Endpoint de API no encontrado' });
+    }
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+} else {
+  console.warn(`[Server] Advertencia: No se encontró la carpeta 'dist' en ${distPath}.`);
 }
 
 app.listen(PORT, () => console.log(`[Server] Poster.ai cloud running on port ${PORT}`));
