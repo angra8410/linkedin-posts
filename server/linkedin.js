@@ -82,11 +82,10 @@ export function setupLinkedInRoutes(app, db, dbShim) {
       const memberUrn = `urn:li:person:${userData.sub}`;
 
       // Persistir de forma segura en las funciones asíncronas de Supabase/dbShim
-      await dbShim.updateSettings({
-        linkedinAccessToken: tokenData.access_token,
-        linkedinMemberUrn: memberUrn,
-        linkedinTokenExpiresAt: Date.now() + (tokenData.expires_in * 1000)
-      });
+      db.settings.linkedinAccessToken = tokenData.access_token;
+      db.settings.linkedinMemberUrn = memberUrn;
+      db.settings.linkedinTokenExpiresAt = Date.now() + (tokenData.expires_in * 1000);
+      await saveDb();
 
       res.redirect('/?linkedin_status=success');
     } catch (err) {
