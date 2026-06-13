@@ -12,11 +12,9 @@ function getSettings(db) {
 export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
   // Auxiliar para construir la URL de redirección detectando el protocolo correcto en la nube (HTTPS)
   const getRedirectUri = (req) => {
-    // Railway y la mayoría de nubes inyectan 'x-forwarded-proto' para indicar el protocolo externo
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.get('host');
 
-    // Forzar https si estamos en producción en Railway
     if (host.includes('railway.app')) {
       return `https://${host}/api/auth/linkedin/callback`;
     }
@@ -32,7 +30,6 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
     const redirectUri = getRedirectUri(req);
     const state = Math.random().toString(36).substring(2) + Date.now();
 
-    // Guardar temporalmente el estado en memoria o db si fuera necesario para CSRF estricto
     if (db && db.settings) {
       db.settings.lastOauthState = state;
     }
@@ -73,7 +70,6 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
         return res.redirect(`/?linkedin_error=${encodeURIComponent(tokenData.error_description || 'Fallo en el intercambio de token')}`);
       }
 
-      // Obtener el perfil del usuario utilizando OpenID Connect (UserInfo endpoint)
       const userResponse = await fetch('https://api.linkedin.com/v2/userinfo', {
         headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
       });
@@ -81,7 +77,6 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
       const userData = await userResponse.json();
       const memberUrn = `urn:li:person:${userData.sub}`;
 
-      // Persistir de forma segura en las funciones asíncronas de Supabase/dbShim
       db.settings.linkedinAccessToken = tokenData.access_token;
       db.settings.linkedinMemberUrn = memberUrn;
       db.settings.linkedinTokenExpiresAt = Date.now() + (tokenData.expires_in * 1000);
@@ -146,9 +141,8 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
     }
   });
 
-  // Endpoints para inicialización, subida y finalización de chunks de vídeo
+  // 3a. Initialize video upload
   app.post('/api/linkedin/init-video-upload', async (req, res) => {
-    const { fileSize, fileSizeBytes } = req.body;
     const settings = getSettings(db);
     const accessToken = settings.linkedinAccessToken;
     const authorUrn = settings.linkedinMemberUrn;
@@ -157,14 +151,17 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
       return res.status(401).json({ error: 'No conectado a LinkedIn o credenciales ausentes.' });
     }
 
-    try {
-      const size = fileSize ?? fileSizeBytes;
+    const { fileSize, fileSizeBytes } = req.body;
+    const size = fileSize ?? fileSizeBytes;
+    if (!size) return res.status(400).json({ error: 'Missing fileSize.' });
 
-      const response = await fetch('https://api.linkedin.com/v2/videos?action=initializeUpload', {
+    try {
+      const initResponse = await fetch('https://api.linkedin.com/rest/videos?action=initializeUpload', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          'X-Restli-Protocol-Version': '2.0.0',
           'LinkedIn-Version': '202601'
         },
         body: JSON.stringify({
@@ -177,26 +174,31 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
         })
       });
 
-      const data = await response.json();
-      if (!response.ok) return res.status(response.status).json(data);
+      if (!initResponse.ok) {
+        const errText = await initResponse.text();
+        throw new Error(`Video init failed (${initResponse.status}): ${errText}`);
+      }
 
-      const value = data.value || {};
+      const initData = await initResponse.json();
+      const uploadInstructions = initData.value?.uploadInstructions;
+      const videoUrn = initData.value?.video;
+      const uploadToken = initData.value?.uploadToken;
 
-      console.log('[Init Video] LinkedIn response value:', JSON.stringify(value));
+      if (!uploadInstructions || !videoUrn) {
+        throw new Error('LinkedIn did not return upload instructions or video URN.');
+      }
 
-      res.json({
-        ...value,
-        uploadInstructions: value.uploadInstructions,
-        videoUrn: value.video,
-        uploadToken: value.uploadToken
-      });
+      console.log('[Init Video] LinkedIn response value:', JSON.stringify(initData.value));
+
+      res.json({ success: true, uploadInstructions, videoUrn, uploadToken });
     } catch (err) {
+      console.error('[Video Init Error]:', err);
       res.status(500).json({ error: err.message });
     }
   });
 
+  // 3b. Finalize video upload
   app.post('/api/linkedin/finalize-video-upload', async (req, res) => {
-    const { videoUrn, uploadedPartIds } = req.body;
     const settings = getSettings(db);
     const accessToken = settings.linkedinAccessToken;
 
@@ -204,37 +206,38 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
       return res.status(401).json({ error: 'No conectado a LinkedIn o credenciales ausentes.' });
     }
 
-    try {
-      console.log('[Finalize Video] Request body:', JSON.stringify({ videoUrn, uploadedPartIds }));
+    const { videoUrn, uploadToken, uploadedPartIds } = req.body;
+    if (!videoUrn) return res.status(400).json({ error: 'Missing videoUrn.' });
 
-      const response = await fetch('https://api.linkedin.com/v2/videos?action=finalizeUpload', {
+    try {
+      console.log('[Finalize Video] Request body:', JSON.stringify({ videoUrn, uploadToken, uploadedPartIds }));
+
+      const finalizeResponse = await fetch('https://api.linkedin.com/rest/videos?action=finalizeUpload', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
+          'X-Restli-Protocol-Version': '2.0.0',
           'LinkedIn-Version': '202601'
         },
         body: JSON.stringify({
           finalizeUploadRequest: {
             video: videoUrn,
-            uploadedPartIds: uploadedPartIds
+            uploadToken: uploadToken || '',
+            uploadedPartIds: uploadedPartIds || []
           }
         })
       });
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        console.error('[Finalize Video Error]:', JSON.stringify({
-          status: response.status,
-          videoUrn,
-          uploadedPartIds,
-          errData
-        }));
-        return res.status(response.status).json(errData);
+      if (!finalizeResponse.ok) {
+        const errText = await finalizeResponse.text();
+        console.error('[Finalize Video Error]:', finalizeResponse.status, errText);
+        throw new Error(`Video finalize failed (${finalizeResponse.status}): ${errText}`);
       }
 
       res.json({ success: true, videoUrn });
     } catch (err) {
+      console.error('[Video Finalize Error]:', err);
       res.status(500).json({ error: err.message });
     }
   });
