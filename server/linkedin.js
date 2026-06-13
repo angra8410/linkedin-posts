@@ -193,7 +193,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
     }
   });
 
-  app.post('/api/linkedin/finalize-video-upload', async (req, res) => {
+   app.post('/api/linkedin/finalize-video-upload', async (req, res) => {
     const { videoUrn, uploadedPartIds } = req.body;
     const settings = getSettings(db);
     const accessToken = settings.linkedinAccessToken;
@@ -220,6 +220,12 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
+        console.error('[Finalize Video Error]:', JSON.stringify({
+          status: response.status,
+          videoUrn,
+          uploadedPartIds,
+          errData
+        }));
         return res.status(response.status).json(errData);
       }
 
@@ -228,4 +234,3 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
       res.status(500).json({ error: err.message });
     }
   });
-}
