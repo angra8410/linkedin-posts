@@ -15,7 +15,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
     // Railway y la mayoría de nubes inyectan 'x-forwarded-proto' para indicar el protocolo externo
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.get('host');
-    
+
     // Forzar https si estamos en producción en Railway
     if (host.includes('railway.app')) {
       return `https://${host}/api/auth/linkedin/callback`;
@@ -31,7 +31,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
 
     const redirectUri = getRedirectUri(req);
     const state = Math.random().toString(36).substring(2) + Date.now();
-    
+
     // Guardar temporalmente el estado en memoria o db si fuera necesario para CSRF estricto
     if (db && db.settings) {
       db.settings.lastOauthState = state;
@@ -39,7 +39,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
 
     const scope = encodeURIComponent('w_member_social openid profile email');
     const authUrl = `https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=${settings.linkedinClientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&state=${state}`;
-    
+
     res.json({ url: authUrl });
   });
 
@@ -77,7 +77,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
       const userResponse = await fetch('https://api.linkedin.com/v2/userinfo', {
         headers: { 'Authorization': `Bearer ${tokenData.access_token}` }
       });
-      
+
       const userData = await userResponse.json();
       const memberUrn = `urn:li:person:${userData.sub}`;
 
@@ -98,7 +98,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
   app.post('/api/linkedin/post', async (req, res) => {
     const { content, videoUrn } = req.body;
     const settings = getSettings(db);
-    
+
     const accessToken = settings.linkedinAccessToken;
     const authorUrn = settings.linkedinMemberUrn;
 
@@ -135,7 +135,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
       });
 
       const data = await response.json().catch(() => ({}));
-      
+
       if (!response.ok) {
         return res.status(response.status).json({ error: 'Error publicando en LinkedIn', details: data });
       }
@@ -147,13 +147,19 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
   });
 
   // Endpoints para inicialización, subida y finalización de chunks de vídeo
-  app.post('/api/linkedin/init-video', async (req, res) => {
-    const { fileSizeBytes } = req.body;
+  app.post('/api/linkedin/init-video-upload', async (req, res) => {
+    const { fileSize, fileSizeBytes } = req.body;
     const settings = getSettings(db);
     const accessToken = settings.linkedinAccessToken;
     const authorUrn = settings.linkedinMemberUrn;
 
+    if (!accessToken || !authorUrn) {
+      return res.status(401).json({ error: 'No conectado a LinkedIn o credenciales ausentes.' });
+    }
+
     try {
+      const size = fileSize ?? fileSizeBytes;
+
       const response = await fetch('https://api.linkedin.com/v2/videos?action=initializeUpload', {
         method: 'POST',
         headers: {
@@ -164,7 +170,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
         body: JSON.stringify({
           initializeUploadRequest: {
             owner: authorUrn,
-            fileSizeBytes: parseInt(fileSizeBytes, 10),
+            fileSizeBytes: parseInt(size, 10),
             uploadCaptions: false,
             uploadThumbnail: false
           }
@@ -173,16 +179,28 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
 
       const data = await response.json();
       if (!response.ok) return res.status(response.status).json(data);
-      res.json(data.value);
+
+      const value = data.value || {};
+
+      res.json({
+        ...value,
+        uploadInstructions: value.uploadInstructions,
+        videoUrn: value.video,
+        uploadToken: value.uploadToken
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post('/api/linkedin/finalize-video', async (req, res) => {
+  app.post('/api/linkedin/finalize-video-upload', async (req, res) => {
     const { videoUrn, uploadedPartIds } = req.body;
     const settings = getSettings(db);
     const accessToken = settings.linkedinAccessToken;
+
+    if (!accessToken) {
+      return res.status(401).json({ error: 'No conectado a LinkedIn o credenciales ausentes.' });
+    }
 
     try {
       const response = await fetch('https://api.linkedin.com/v2/videos?action=finalizeUpload', {
@@ -204,7 +222,8 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
         const errData = await response.json().catch(() => ({}));
         return res.status(response.status).json(errData);
       }
-      res.json({ success: true });
+
+      res.json({ success: true, videoUrn });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
