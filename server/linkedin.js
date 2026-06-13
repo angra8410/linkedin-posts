@@ -182,6 +182,8 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
 
       const value = data.value || {};
 
+      console.log('[Init Video] LinkedIn response value:', JSON.stringify(value));
+
       res.json({
         ...value,
         uploadInstructions: value.uploadInstructions,
@@ -203,6 +205,8 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
     }
 
     try {
+      console.log('[Finalize Video] Request body:', JSON.stringify({ videoUrn, uploadedPartIds }));
+
       const response = await fetch('https://api.linkedin.com/v2/videos?action=finalizeUpload', {
         method: 'POST',
         headers: {
@@ -220,6 +224,12 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
+        console.error('[Finalize Video Error]:', JSON.stringify({
+          status: response.status,
+          videoUrn,
+          uploadedPartIds,
+          errData
+        }));
         return res.status(response.status).json(errData);
       }
 
