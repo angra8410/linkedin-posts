@@ -251,7 +251,13 @@ app.post('/api/linkedin/proxy-video-upload', async (req, res) => {
 // Build a db-compatible shim so linkedin.js works unchanged
 const dbShim = {
   get settings() { return this._settings || {}; },
-  set settings(v) { this._settings = v; }
+  set settings(v) { this._settings = v; },
+  updateSettings: async (newData) => {
+    const current = await getSettings();
+    const updated = { ...current, ...newData };
+    await saveSettings(updated);
+    dbShim._settings = updated;
+  }
 };
 
 // Pre-load settings into shim
