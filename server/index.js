@@ -269,7 +269,7 @@ const saveDbShim = async () => {
   dbShim._settings = await getSettings();
 };
 
-setupLinkedInRoutes(app, db, dbShim, saveDbShim);
+setupLinkedInRoutes(app, dbShim, dbShim, saveDbShim);
 
 // ── AUTOPILOT PIPELINE ────────────────────────────────────────────────────────
 app.post('/api/autopilot', async (req, res) => {
