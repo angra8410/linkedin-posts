@@ -9,7 +9,7 @@ function getSettings(db) {
   };
 }
 
-export function setupLinkedInRoutes(app, db, dbShim) {
+export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
   // Auxiliar para construir la URL de redirección detectando el protocolo correcto en la nube (HTTPS)
   const getRedirectUri = (req) => {
     // Railway y la mayoría de nubes inyectan 'x-forwarded-proto' para indicar el protocolo externo
