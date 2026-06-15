@@ -29,7 +29,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// ── DB HELPERS (Supabase replaces db.json) ──────────────────────────────────
+// ── DB HELPERS ──────────────────────────────────────────────────────────────
 async function getSettings() {
   const { data } = await supabase.from('settings').select('data').eq('id', 'app').single();
   const base = data?.data || {};
@@ -120,8 +120,13 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(bodyParser.json({ limit: '100mb' }));
-app.use(bodyParser.raw({ type: 'application/octet-stream', limit: '200mb' }));
+
+// Raw binary parser for video chunk uploads — must come BEFORE the JSON body parser
+// so Express doesn't try to parse octet-stream as JSON
+app.use('/api/linkedin/proxy-video-upload-chunk', express.raw({ type: 'application/octet-stream', limit: '10mb' }));
+
+// JSON parser for everything else (reduced from 100mb — no more base64 video bodies)
+app.use(bodyParser.json({ limit: '10mb' }));
 
 // ── SETTINGS ─────────────────────────────────────────────────────────────────
 app.get('/api/settings', async (req, res) => {
@@ -209,7 +214,7 @@ app.post('/api/logs/bulk', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── GROQ PROXY (replaces Ollama proxy) ───────────────────────────────────────
+// ── GROQ PROXY ────────────────────────────────────────────────────────────────
 app.post('/api/ollama/generate', async (req, res) => {
   try {
     const { prompt, system, model } = req.body;
@@ -220,27 +225,106 @@ app.post('/api/ollama/generate', async (req, res) => {
   }
 });
 
-// ── VIDEO UPLOAD PROXY ────────────────────────────────────────────────────────
-app.post('/api/linkedin/proxy-video-upload', async (req, res) => {
-  const { uploadInstructions, videoBase64 } = req.body;
-  if (!uploadInstructions || !videoBase64)
-    return res.status(400).json({ error: 'Missing uploadInstructions or videoBase64' });
+// ── VIDEO UPLOAD PROXY (3 routes replace the old single base64 route) ─────────
+
+// 1. Init — ask LinkedIn to create the upload session
+app.post('/api/linkedin/init-video-upload', async (req, res) => {
   try {
-    const videoBuffer = Buffer.from(videoBase64, 'base64');
-    const uploadedPartIds = [];
-    for (let i = 0; i < uploadInstructions.length; i++) {
-      const { uploadUrl, firstByte, lastByte } = uploadInstructions[i];
-      const chunk = videoBuffer.slice(firstByte, Math.min(lastByte + 1, videoBuffer.length));
-      const r = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: chunk
-      });
-      if (!r.ok) throw new Error(`Chunk ${i+1} failed (${r.status}): ${await r.text()}`);
-      const etag = r.headers.get('etag') || r.headers.get('ETag') || `part-${i}`;
-      uploadedPartIds.push(etag.replace(/"/g, ''));
-    }
-    res.json({ success: true, uploadedPartIds });
+    const settings = await getSettings();
+    const { linkedinAccessToken: accessToken, linkedinMemberUrn: authorUrn } = settings;
+    if (!accessToken || !authorUrn) return res.status(401).json({ error: 'LinkedIn not authenticated' });
+
+    const { fileSize } = req.body;
+
+    const response = await fetch('https://api.linkedin.com/rest/videos?action=initializeUpload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'X-Restli-Protocol-Version': '2.0.0',
+        'LinkedIn-Version': '202601'
+      },
+      body: JSON.stringify({
+        initializeUploadRequest: {
+          owner: authorUrn,
+          fileSizeBytes: fileSize,
+          uploadCaptions: false,
+          uploadThumbnail: false
+        }
+      })
+    });
+
+    if (!response.ok) throw new Error(`LinkedIn init failed (${response.status}): ${await response.text()}`);
+    const data = await response.json();
+    const value = data.value;
+
+    res.json({
+      videoUrn: value.video,
+      uploadToken: value.uploadToken,
+      uploadInstructions: value.uploadInstructions // array of { uploadUrl, firstByte, lastByte }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Chunk upload — receives raw binary from the browser, forwards to LinkedIn's uploadUrl
+// express.raw() is applied to this route above (before bodyParser.json)
+app.post('/api/linkedin/proxy-video-upload-chunk', async (req, res) => {
+  try {
+    const { uploadUrl } = req.query;
+    if (!uploadUrl) return res.status(400).json({ error: 'Missing uploadUrl query param' });
+
+    const chunkBuffer = req.body; // raw Buffer from express.raw()
+    if (!chunkBuffer || chunkBuffer.length === 0) return res.status(400).json({ error: 'Empty chunk body' });
+
+    const r = await fetch(decodeURIComponent(uploadUrl), {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(chunkBuffer.length)
+      },
+      body: chunkBuffer,
+      duplex: 'half'
+    });
+
+    if (!r.ok) throw new Error(`LinkedIn chunk upload failed (${r.status}): ${await r.text()}`);
+
+    const etag = r.headers.get('etag') || r.headers.get('ETag') || '';
+    res.json({ ETag: etag.replace(/"/g, '') });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Finalize — tells LinkedIn all chunks are done
+app.post('/api/linkedin/finalize-video-upload', async (req, res) => {
+  try {
+    const settings = await getSettings();
+    const { linkedinAccessToken: accessToken } = settings;
+    if (!accessToken) return res.status(401).json({ error: 'LinkedIn not authenticated' });
+
+    const { videoUrn, uploadToken, uploadedPartIds } = req.body;
+
+    const response = await fetch('https://api.linkedin.com/rest/videos?action=finalizeUpload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'X-Restli-Protocol-Version': '2.0.0',
+        'LinkedIn-Version': '202601'
+      },
+      body: JSON.stringify({
+        finalizeUploadRequest: {
+          video: videoUrn,
+          uploadToken,
+          uploadedPartIds
+        }
+      })
+    });
+
+    if (!response.ok) throw new Error(`LinkedIn finalize failed (${response.status}): ${await response.text()}`);
+    res.json({ success: true, videoUrn });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -361,10 +445,6 @@ app.post('/api/autopilot', async (req, res) => {
 });
 
 // ── VIDEO PROCESSING POLLER ───────────────────────────────────────────────────
-// Polls LinkedIn's video status endpoint until the video is AVAILABLE (ready to post),
-// PROCESSING_FAILED (LinkedIn rejected it), or the timeout is reached.
-// LinkedIn's finalizeUpload returns 200 synchronously, but the video is processed
-// asynchronously — posting before AVAILABLE causes a broken/unrenderable post.
 async function waitForVideoAvailable(videoUrn, accessToken, { intervalMs = 5000, timeoutMs = 120000 } = {}) {
   const deadline = Date.now() + timeoutMs;
   const encoded = encodeURIComponent(videoUrn);
@@ -384,7 +464,6 @@ async function waitForVideoAvailable(videoUrn, accessToken, { intervalMs = 5000,
 
       if (status === 'AVAILABLE') return { ok: true };
       if (status === 'PROCESSING_FAILED') return { ok: false, reason: 'PROCESSING_FAILED' };
-      // WAITING_UPLOAD / PROCESSING → keep waiting
     } catch (err) {
       console.warn('[Video Poll] fetch error (will retry):', err.message);
     }
@@ -414,7 +493,6 @@ setInterval(async () => {
       }
 
       try {
-        // ── Wait for video to finish processing before posting ─────────────
         if (draft.videoUrn) {
           console.log(`[Scheduler] Video post detected for '${draft.id}', polling LinkedIn for AVAILABLE status...`);
           const poll = await waitForVideoAvailable(draft.videoUrn, accessToken);

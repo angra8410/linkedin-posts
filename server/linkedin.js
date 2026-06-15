@@ -197,7 +197,42 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
     }
   });
 
-  // 3b. Finalize video upload
+  // 3b. Proxy individual chunk upload to LinkedIn's signed Ambry URL
+  // This avoids CORS issues when uploading directly from the browser.
+  app.post('/api/linkedin/proxy-video-upload', async (req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', async () => {
+      const uploadUrl = req.headers['x-upload-url'];
+      if (!uploadUrl) return res.status(400).json({ error: 'Missing x-upload-url header.' });
+
+      const body = Buffer.concat(chunks);
+      console.log(`[Proxy Upload] Uploading ${body.length} bytes to signed URL...`);
+
+      try {
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body
+        });
+
+        const etag = uploadRes.headers.get('etag') || uploadRes.headers.get('ETag') || '';
+        console.log(`[Proxy Upload] Done — status ${uploadRes.status}, ETag: ${etag}`);
+
+        if (!uploadRes.ok) {
+          const errText = await uploadRes.text();
+          return res.status(uploadRes.status).json({ error: `Upload failed: ${errText}` });
+        }
+
+        res.json({ success: true, etag });
+      } catch (err) {
+        console.error('[Proxy Upload Error]:', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+  });
+
+  // 3c. Finalize video upload
   app.post('/api/linkedin/finalize-video-upload', async (req, res) => {
     const settings = getSettings(db);
     const accessToken = settings.linkedinAccessToken;
@@ -212,6 +247,14 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
     try {
       console.log('[Finalize Video] Request body:', JSON.stringify({ videoUrn, uploadToken, uploadedPartIds }));
 
+      // Build finalize request — omit uploadToken entirely if empty/absent
+      // (sending uploadToken: "" alongside uploadedPartIds breaks multipart finalize)
+      const finalizeUploadRequest = {
+        video: videoUrn,
+        uploadedPartIds: uploadedPartIds || []
+      };
+      if (uploadToken) finalizeUploadRequest.uploadToken = uploadToken;
+
       const finalizeResponse = await fetch('https://api.linkedin.com/rest/videos?action=finalizeUpload', {
         method: 'POST',
         headers: {
@@ -220,13 +263,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
           'X-Restli-Protocol-Version': '2.0.0',
           'LinkedIn-Version': '202601'
         },
-        body: JSON.stringify({
-          finalizeUploadRequest: {
-            video: videoUrn,
-            uploadToken: uploadToken || '',
-            uploadedPartIds: uploadedPartIds || []
-          }
-        })
+        body: JSON.stringify({ finalizeUploadRequest })
       });
 
       if (!finalizeResponse.ok) {
@@ -235,9 +272,40 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
         throw new Error(`Video finalize failed (${finalizeResponse.status}): ${errText}`);
       }
 
+      console.log('[Finalize Video] Success for:', videoUrn);
       res.json({ success: true, videoUrn });
     } catch (err) {
       console.error('[Video Finalize Error]:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 3d. Poll video processing status
+  app.get('/api/linkedin/video-status/:videoUrn', async (req, res) => {
+    const settings = getSettings(db);
+    const accessToken = settings.linkedinAccessToken;
+
+    if (!accessToken) {
+      return res.status(401).json({ error: 'No conectado a LinkedIn.' });
+    }
+
+    const videoUrn = decodeURIComponent(req.params.videoUrn);
+    const encoded = encodeURIComponent(videoUrn);
+
+    try {
+      const statusRes = await fetch(`https://api.linkedin.com/rest/videos/${encoded}`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'X-Restli-Protocol-Version': '2.0.0',
+          'LinkedIn-Version': '202601'
+        }
+      });
+
+      const data = await statusRes.json().catch(() => ({}));
+      console.log(`[Video Status] ${videoUrn} → ${data?.status}`);
+      res.json({ status: data?.status, raw: data });
+    } catch (err) {
+      console.error('[Video Status Error]:', err);
       res.status(500).json({ error: err.message });
     }
   });
