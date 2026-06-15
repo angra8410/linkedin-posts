@@ -33,7 +33,6 @@ const supabase = createClient(
 async function getSettings() {
   const { data } = await supabase.from('settings').select('data').eq('id', 'app').single();
   const base = data?.data || {};
-  // Inject LinkedIn credentials from env if not already set in DB
   return {
     ...base,
     linkedinClientId: process.env.LINKEDIN_CLIENT_ID || base.linkedinClientId,
@@ -86,7 +85,7 @@ async function saveLog(log) {
   return log;
 }
 
-// ── GROQ LLM HELPER (replaces callOllamaBackend) ────────────────────────────
+// ── GROQ LLM HELPER ─────────────────────────────────────────────────────────
 async function callGroq({ model, prompt, system }) {
   const groqModel = model || process.env.GROQ_DEFAULT_MODEL || 'llama-3.3-70b-versatile';
   const messages = [];
@@ -210,7 +209,7 @@ app.post('/api/logs/bulk', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── GROQ PROXY (replaces Ollama proxy — keeps frontend compatible) ────────────
+// ── GROQ PROXY (replaces Ollama proxy) ───────────────────────────────────────
 app.post('/api/ollama/generate', async (req, res) => {
   try {
     const { prompt, system, model } = req.body;
@@ -248,7 +247,6 @@ app.post('/api/linkedin/proxy-video-upload', async (req, res) => {
 });
 
 // ── LINKEDIN OAUTH ROUTES ─────────────────────────────────────────────────────
-// Build a db-compatible shim so linkedin.js works unchanged
 const dbShim = {
   get settings() { return this._settings || {}; },
   set settings(v) { this._settings = v; },
@@ -260,12 +258,10 @@ const dbShim = {
   }
 };
 
-// Pre-load settings into shim
 (async () => { dbShim._settings = await getSettings(); })();
 
 const saveDbShim = async () => {
   await saveSettings(dbShim._settings);
-  // Keep shim fresh
   dbShim._settings = await getSettings();
 };
 
@@ -364,6 +360,41 @@ app.post('/api/autopilot', async (req, res) => {
   }
 });
 
+// ── VIDEO PROCESSING POLLER ───────────────────────────────────────────────────
+// Polls LinkedIn's video status endpoint until the video is AVAILABLE (ready to post),
+// PROCESSING_FAILED (LinkedIn rejected it), or the timeout is reached.
+// LinkedIn's finalizeUpload returns 200 synchronously, but the video is processed
+// asynchronously — posting before AVAILABLE causes a broken/unrenderable post.
+async function waitForVideoAvailable(videoUrn, accessToken, { intervalMs = 5000, timeoutMs = 120000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  const encoded = encodeURIComponent(videoUrn);
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`https://api.linkedin.com/rest/videos/${encoded}`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'X-Restli-Protocol-Version': '2.0.0',
+          'LinkedIn-Version': '202601'
+        }
+      });
+      const data = await res.json().catch(() => ({}));
+      const status = data?.status;
+      console.log(`[Video Poll] ${videoUrn} → ${status}`);
+
+      if (status === 'AVAILABLE') return { ok: true };
+      if (status === 'PROCESSING_FAILED') return { ok: false, reason: 'PROCESSING_FAILED' };
+      // WAITING_UPLOAD / PROCESSING → keep waiting
+    } catch (err) {
+      console.warn('[Video Poll] fetch error (will retry):', err.message);
+    }
+
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+
+  return { ok: false, reason: 'TIMEOUT' };
+}
+
 // ── BACKGROUND SCHEDULER ──────────────────────────────────────────────────────
 setInterval(async () => {
   try {
@@ -381,24 +412,59 @@ setInterval(async () => {
         draft.status = 'ready-manual'; draft.updatedAt = Date.now();
         await saveDraft(draft); continue;
       }
+
       try {
+        // ── Wait for video to finish processing before posting ─────────────
+        if (draft.videoUrn) {
+          console.log(`[Scheduler] Video post detected for '${draft.id}', polling LinkedIn for AVAILABLE status...`);
+          const poll = await waitForVideoAvailable(draft.videoUrn, accessToken);
+          if (!poll.ok) {
+            throw new Error(
+              poll.reason === 'PROCESSING_FAILED'
+                ? `LinkedIn rejected the video (PROCESSING_FAILED). Check the video format/codec and re-upload.`
+                : `Video not ready after 120s (TIMEOUT). LinkedIn may still be processing — try rescheduling.`
+            );
+          }
+          console.log(`[Scheduler] Video AVAILABLE. Proceeding to publish '${draft.id}'.`);
+        }
+
+        const postBody = {
+          author: authorUrn,
+          commentary: draft.content,
+          visibility: 'PUBLIC',
+          distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
+          lifecycleState: 'PUBLISHED',
+          ...(draft.videoUrn ? { content: { media: { id: draft.videoUrn } } } : {})
+        };
+
         const response = await fetch('https://api.linkedin.com/v2/posts', {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0', 'LinkedIn-Version': '202601' },
-          body: JSON.stringify({
-            author: authorUrn, commentary: draft.content, visibility: 'PUBLIC',
-            distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
-            lifecycleState: 'PUBLISHED',
-            ...(draft.videoUrn ? { content: { media: { id: draft.videoUrn } } } : {})
-          })
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+            'X-Restli-Protocol-Version': '2.0.0',
+            'LinkedIn-Version': '202601'
+          },
+          body: JSON.stringify(postBody)
         });
+
         if (!response.ok) throw new Error(`LinkedIn API ${response.status}: ${await response.text()}`);
+
         const postId = response.headers.get('x-restli-id') || `urn:li:share:${Date.now()}`;
         draft.status = 'posted'; draft.postedAt = Date.now(); draft.linkedinPostId = postId; draft.updatedAt = Date.now();
         await saveDraft(draft);
-        const log = { id: 'log-' + Date.now(), sourceDraftId: draft.id, postTitle: draft.prompt.slice(0, 40) + '...', postedAt: Date.now(), pillar: draft.pillar, format: 'insight', impressions: 0, reactions: 0, comments: 0, reposts: 0, profileViews: 0, notes: `Auto-published. URN: ${postId}`, createdAt: Date.now(), updatedAt: Date.now() };
+
+        const log = {
+          id: 'log-' + Date.now(), sourceDraftId: draft.id,
+          postTitle: draft.prompt.slice(0, 40) + '...',
+          postedAt: Date.now(), pillar: draft.pillar, format: 'insight',
+          impressions: 0, reactions: 0, comments: 0, reposts: 0, profileViews: 0,
+          notes: `Auto-published. URN: ${postId}`,
+          createdAt: Date.now(), updatedAt: Date.now()
+        };
         await saveLog(log);
         console.log(`[Scheduler] Published '${draft.id}' → ${postId}`);
+
       } catch (err) {
         draft.status = 'error'; draft.errorMessage = err.message; draft.updatedAt = Date.now();
         await saveDraft(draft);
@@ -411,16 +477,11 @@ setInterval(async () => {
 // ── STATIC FRONTEND ───────────────────────────────────────────────────────────
 import { existsSync } from 'fs';
 
-// process.cwd() resuelve de forma robusta la raíz en local (Windows) y en la nube (Linux /app)
 const distPath = path.resolve(process.cwd(), 'dist');
 
 if (existsSync(distPath)) {
   console.log(`[Server] Directorio de frontend estático detectado en: ${distPath}`);
-  
-  // Servir archivos compilados por Vite (HTML, JS, CSS)
   app.use(express.static(distPath));
-  
-  // Enrutar cualquier otra petición SPA hacia el index.html de React
   app.get('*', (req, res) => {
     if (req.url.startsWith('/api')) {
       return res.status(404).json({ error: 'Endpoint de API no encontrado' });
