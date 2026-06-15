@@ -268,7 +268,7 @@ app.post('/api/linkedin/init-video-upload', async (req, res) => {
   }
 });
 
-// 2. Chunk upload — receives raw binary from the browser, forwards to LinkedIn's uploadUrl
+// 2. Chunk upload — receives raw binary from the browser, forwards to LinkedIn's uploadUrl directly without double decoding
 // express.raw() is applied to this route above (before bodyParser.json)
 app.post('/api/linkedin/proxy-video-upload-chunk', async (req, res) => {
   try {
@@ -278,7 +278,8 @@ app.post('/api/linkedin/proxy-video-upload-chunk', async (req, res) => {
     const chunkBuffer = req.body; // raw Buffer from express.raw()
     if (!chunkBuffer || chunkBuffer.length === 0) return res.status(400).json({ error: 'Empty chunk body' });
 
-    const r = await fetch(decodeURIComponent(uploadUrl), {
+    // Express query parser already handles the first pass decode sequence automatically
+    const r = await fetch(uploadUrl, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/octet-stream',
@@ -515,7 +516,7 @@ setInterval(async () => {
           ...(draft.videoUrn ? { content: { media: { id: draft.videoUrn } } } : {})
         };
 
-        const response = await fetch('https://api.linkedin.com/v2/posts', {
+        const response = await fetch('https://api.linkedin.com/rest/posts', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${accessToken}`,
