@@ -913,7 +913,6 @@ export default function DraftTab({ profile, settings }: Props) {
     if (withVideo && videoFile && !resolvedVideoUrn) {
       try {
         setVideoUploadStatus('uploading');
-        // Step 1: Init upload
         const initRes = await fetch('/api/linkedin/init-video-upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -921,28 +920,27 @@ export default function DraftTab({ profile, settings }: Props) {
         });
         const initData = await initRes.json();
         if (!initRes.ok) throw new Error(initData.error || 'Video init failed');
-        // Step 2: Read as base64 and send chunked to server proxy
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve((reader.result as string).split(',')[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(videoFile);
-        });
-        const putRes = await fetch('/api/linkedin/proxy-video-upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ uploadInstructions: initData.uploadInstructions, videoBase64: base64 })
-        });
-        const putData = await putRes.json();
-        if (!putRes.ok) throw new Error(putData.error || `Video upload failed (${putRes.status})`);
-        // Step 3: Finalize with part IDs
+
+        const uploadedPartIds: string[] = [];
+        for (const instruction of initData.uploadInstructions) {
+          const chunk = videoFile.slice(instruction.firstByte, instruction.lastByte + 1);
+          const chunkRes = await fetch(
+            `/api/linkedin/proxy-video-upload-chunk?uploadUrl=${encodeURIComponent(instruction.uploadUrl)}`,
+            { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: chunk }
+          );
+          const chunkData = await chunkRes.json();
+          if (!chunkRes.ok) throw new Error(chunkData.error || 'Chunk upload failed');
+          uploadedPartIds.push(chunkData.ETag);
+        }
+
         const finalRes = await fetch('/api/linkedin/finalize-video-upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videoUrn: initData.videoUrn, uploadToken: initData.uploadToken, uploadedPartIds: putData.uploadedPartIds || [] })
+          body: JSON.stringify({ videoUrn: initData.videoUrn, uploadToken: initData.uploadToken, uploadedPartIds })
         });
         const finalData = await finalRes.json();
         if (!finalRes.ok) throw new Error(finalData.error || 'Video finalize failed');
+
         resolvedVideoUrn = finalData.videoUrn;
         setVideoUploadStatus('done');
       } catch (err: any) {
@@ -990,12 +988,10 @@ export default function DraftTab({ profile, settings }: Props) {
     setPublishSuccess(false);
 
     try {
-      // If video toggle is on, upload video directly browser→LinkedIn (bypass server size limits)
+      // If video toggle is on, upload video via sequential chunk architecture
       let videoUrn: string | undefined;
       if (withVideo && videoFile) {
         setVideoUploadStatus('uploading');
-
-        // Step 1: Init upload — get upload instructions (chunks) from LinkedIn via server
         const initRes = await fetch('/api/linkedin/init-video-upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1004,33 +1000,25 @@ export default function DraftTab({ profile, settings }: Props) {
         const initData = await initRes.json();
         if (!initRes.ok) throw new Error(initData.error || 'Video init failed');
 
-        // Step 2: Read file as base64 and send all chunks to server proxy
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve((reader.result as string).split(',')[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(videoFile);
-        });
+        const uploadedPartIds: string[] = [];
+        for (const instruction of initData.uploadInstructions) {
+          const chunk = videoFile.slice(instruction.firstByte, instruction.lastByte + 1);
+          const chunkRes = await fetch(
+            `/api/linkedin/proxy-video-upload-chunk?uploadUrl=${encodeURIComponent(instruction.uploadUrl)}`,
+            { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: chunk }
+          );
+          const chunkData = await chunkRes.json();
+          if (!chunkRes.ok) throw new Error(chunkData.error || 'Chunk upload failed');
+          uploadedPartIds.push(chunkData.ETag);
+        }
 
-        const putRes = await fetch('/api/linkedin/proxy-video-upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            uploadInstructions: initData.uploadInstructions,
-            videoBase64: base64
-          })
-        });
-        const putData = await putRes.json();
-        if (!putRes.ok) throw new Error(putData.error || `Video upload failed (${putRes.status})`);
-
-        // Step 3: Finalize with uploadedPartIds
         const finalRes = await fetch('/api/linkedin/finalize-video-upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             videoUrn: initData.videoUrn,
             uploadToken: initData.uploadToken,
-            uploadedPartIds: putData.uploadedPartIds || []
+            uploadedPartIds
           })
         });
         const finalData = await finalRes.json();
