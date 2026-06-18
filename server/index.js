@@ -121,11 +121,8 @@ const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 
-// Raw binary parser for video chunk uploads — must come BEFORE the JSON body parser
-// so Express doesn't try to parse octet-stream as JSON
 app.use('/api/linkedin/proxy-video-upload-chunk', express.raw({ type: 'application/octet-stream', limit: '10mb' }));
 
-// JSON parser for everything else (reduced from 100mb — no more base64 video bodies)
 app.use(bodyParser.json({ limit: '10mb' }));
 
 // ── SETTINGS ─────────────────────────────────────────────────────────────────
@@ -225,9 +222,7 @@ app.post('/api/ollama/generate', async (req, res) => {
   }
 });
 
-// ── VIDEO UPLOAD PROXY (3 routes replace the old single base64 route) ─────────
-
-// 1. Init — ask LinkedIn to create the upload session
+// ── VIDEO UPLOAD PROXY ─────────────────────────────────────────────────────────
 app.post('/api/linkedin/init-video-upload', async (req, res) => {
   try {
     const settings = await getSettings();
@@ -261,24 +256,21 @@ app.post('/api/linkedin/init-video-upload', async (req, res) => {
     res.json({
       videoUrn: value.video,
       uploadToken: value.uploadToken,
-      uploadInstructions: value.uploadInstructions // array of { uploadUrl, firstByte, lastByte }
+      uploadInstructions: value.uploadInstructions
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 2. Chunk upload — receives raw binary from the browser, forwards to LinkedIn's uploadUrl directly without double decoding
-// express.raw() is applied to this route above (before bodyParser.json)
 app.post('/api/linkedin/proxy-video-upload-chunk', async (req, res) => {
   try {
     const { uploadUrl } = req.query;
     if (!uploadUrl) return res.status(400).json({ error: 'Missing uploadUrl query param' });
 
-    const chunkBuffer = req.body; // raw Buffer from express.raw()
+    const chunkBuffer = req.body;
     if (!chunkBuffer || chunkBuffer.length === 0) return res.status(400).json({ error: 'Empty chunk body' });
 
-    // Express query parser already handles the first pass decode sequence automatically
     const r = await fetch(uploadUrl, {
       method: 'PUT',
       headers: {
@@ -298,7 +290,6 @@ app.post('/api/linkedin/proxy-video-upload-chunk', async (req, res) => {
   }
 });
 
-// 3. Finalize — tells LinkedIn all chunks are done
 app.post('/api/linkedin/finalize-video-upload', async (req, res) => {
   try {
     const settings = await getSettings();
@@ -370,8 +361,24 @@ app.post('/api/autopilot', async (req, res) => {
       mainSystem = 'You are a master storyteller. Write authentic, human-first LinkedIn content. No tech jargon unless essential. Lead with emotion. Short paragraphs. Universal truth. No emojis. End with an open question.';
       mainPrompt = `Write a deeply personal, human LinkedIn story.\nTopic: ${topic}\nWriter: ${activeProfile.name || 'the author'}, ${activeProfile.currentTitle}\nInput Mode: ${inputMode}\nTone: raw, honest, conversational.`;
     } else {
-      mainSystem = 'You are a professional LinkedIn growth assistant. Output only the post commentary. No markdown, no preamble. No emojis.';
-      mainPrompt = `Generate a high-converting LinkedIn post.\nTopic: ${topic}\nPillar: ${pillar || activeProfile.contentPillars[0]}\nProfile Tone: ${activeProfile.tone}\nExperience: ${activeProfile.yearsExperience} years in ${activeProfile.industries.join(', ')}\nSkills: ${activeProfile.skills.join(', ')}\nTarget Audience: ${activeProfile.audience}\nInput Mode: ${inputMode}\n\nSound professional, candid, direct. No emojis.`;
+      mainSystem = `You are a professional LinkedIn ghostwriter. Your job is to write posts that feel like they came from a real practitioner — not a resume or a LinkedIn brag post.
+
+RULES (non-negotiable):
+- NEVER mention years of experience, industry names, job titles, or company types directly in the post. These are background context only — use them to inform tone and relevance, not as content to repeat.
+- NEVER open with "I have X years of experience" or "Having worked in X, Y, and Z industries".
+- NEVER use phrases like "Throughout my career" or "Over the years" as openers.
+- Lead with the idea, the insight, or the problem — not with the author's background.
+- Short paragraphs (1–3 lines max). Conversational. Direct. No corporate speak.
+- No emojis. No markdown. No preamble. Output only the post text.`;
+
+      mainPrompt = `Write a high-converting LinkedIn post on this topic: "${topic}"
+
+Content pillar: ${pillar || activeProfile.contentPillars?.[0] || 'Professional Growth'}
+Tone to aim for: ${activeProfile.tone || 'professional, candid, direct'}
+Target audience: ${activeProfile.audience || 'professionals'}
+Relevant skills to draw from (do NOT list these explicitly): ${activeProfile.skills?.join(', ')}
+
+The post should feel like a sharp, opinionated take from a practitioner who knows their craft. Lead with the insight or the problem, not with who you are. Make it worth reading for someone who has never heard of the author.`;
     }
 
     const mainDraft = stripEmojis((await callGroq({ model, prompt: mainPrompt, system: mainSystem })).trim());
@@ -382,8 +389,8 @@ app.post('/api/autopilot', async (req, res) => {
     for (const style of styles) {
       const r = await callGroq({
         model,
-        prompt: `Rewrite this LinkedIn post in a '${style}' style. Keep the core message. No emojis.\nPost:\n${mainDraft}`,
-        system: 'You are a master copywriter. Output only the rewritten post. No emojis.'
+        prompt: `Rewrite this LinkedIn post in a '${style}' style. Keep the core message. No emojis. Do NOT add years of experience, industry names, or career background.\nPost:\n${mainDraft}`,
+        system: 'You are a master copywriter. Output only the rewritten post. No emojis. No career history openers.'
       });
       variants.push({ style, content: stripEmojis(r.trim()) });
     }
