@@ -106,9 +106,9 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
         author: authorUrn,
         commentary: content,
         visibility: 'PUBLIC',
+        lifecycleState: 'PUBLISHED',
         distribution: {
-          feedDistribution: 'MAIN_FEED',
-          
+          feedDistribution: 'MAIN_FEED',   
         }
       };
 
