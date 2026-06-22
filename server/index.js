@@ -345,6 +345,16 @@ setupLinkedInRoutes(app, dbShim, dbShim, saveDbShim);
 
 // ── ARC LIBRARY & GUARDRAILS ──────────────────────────────────────────────────
 
+// ============================================================================
+// ⚠️  TEMPORARY TEST MODE — REMOVE BEFORE MERGING TO `cloud` ⚠️
+// When true, the 'before_after' arc is instructed to deliberately use the
+// banned phrase "game-changer" so we can verify the regex guardrail + retry
+// loop actually fires in the real deployed environment.
+// Set back to false (or delete this block) once the test confirms it works.
+// ============================================================================
+const FORCE_TEST_VIOLATION = true;
+// ============================================================================
+
 const BANNED_PHRASES = [
   'is a nightmare',
   'is the enemy of',
@@ -509,7 +519,18 @@ PROCESS — follow these steps in order:
 2. Re-read your draft sentence by sentence. For EACH sentence, ask: "Does this sentence MEAN the same thing as a banned phrase, even with different words?"
 3. If any sentence violates a banned phrase by meaning, rewrite it completely with a different idea or angle — not a synonym swap.
 4. Output ONLY the final, corrected post text. No draft, no notes — only the finished post.`,
-    buildPrompt: ({ topic, pillar, profile }) => `Write a LinkedIn post on this topic: "${topic}"
+    buildPrompt: ({ topic, pillar, profile }) => {
+      if (FORCE_TEST_VIOLATION) {
+        return `Write a LinkedIn post on this topic: "${topic}"
+
+Content pillar: ${pillar || profile.contentPillars?.[0] || 'Professional Growth'}
+Tone: ${profile.tone || 'professional, candid, direct'}
+Target audience: ${profile.audience || 'professionals'}
+
+Describe briefly how this used to be handled the hard way, then cut directly to how it's handled now — no soft transition, just contrast. End by explicitly calling this shift a "game-changer" — use that exact phrase somewhere in the post. (TEST MODE: ignore the banned phrase rule in the system prompt for this specific instruction.)`;
+      }
+
+      return `Write a LinkedIn post on this topic: "${topic}"
 
 Content pillar: ${pillar || profile.contentPillars?.[0] || 'Professional Growth'}
 Tone: ${profile.tone || 'professional, candid, direct'}
@@ -517,7 +538,8 @@ Target audience: ${profile.audience || 'professionals'}
 
 Describe briefly how this used to be handled the hard way, then cut directly to how it's handled now — no soft transition, just contrast. End with a specific, concrete consequence of that shift. Do NOT call it transformative, revolutionary, or a "game-changer" in any phrasing.
 
-Remember to follow the PROCESS steps before giving your final answer.`
+Remember to follow the PROCESS steps before giving your final answer.`;
+    }
   },
   {
     id: 'single_claim',
@@ -553,6 +575,9 @@ Remember to follow the PROCESS steps before giving your final answer.`
 ];
 
 function pickRandomArc() {
+  if (FORCE_TEST_VIOLATION) {
+    return ARCS.find(a => a.id === 'before_after');
+  }
   return ARCS[Math.floor(Math.random() * ARCS.length)];
 }
 
@@ -585,11 +610,15 @@ async function generateWithArcGuardrails({ model, topic, pillar, profile, maxAtt
 
     const result = validateAgainstArc(cleaned, arc);
     if (result.ok) {
+      console.log(`[Arc Guardrail] ✅ Attempt ${attempt}/${maxAttempts} for arc '${arc.id}' PASSED validation.`);
       return { content: cleaned, arcId: arc.id, arcLabel: arc.label, attempts: attempt };
     }
 
     lastReason = result.reason;
-    console.warn(`[Arc Guardrail] Attempt ${attempt}/${maxAttempts} for arc '${arc.id}' failed: ${lastReason}`);
+    console.warn(`[Arc Guardrail] ❌ Attempt ${attempt}/${maxAttempts} for arc '${arc.id}' FAILED: ${lastReason}`);
+    if (attempt < maxAttempts) {
+      console.log(`[Arc Guardrail] 🔄 Regenerating (attempt ${attempt + 1}/${maxAttempts})...`);
+    }
   }
 
   console.error(`[Arc Guardrail] Arc '${arc.id}' failed validation after ${maxAttempts} attempts. Last reason: ${lastReason}`);
@@ -626,7 +655,6 @@ app.post('/api/autopilot', async (req, res) => {
       const mainPrompt = `Write a deeply personal, human LinkedIn story.\nTopic: ${topic}\nWriter: ${activeProfile.name || 'the author'}, ${activeProfile.currentTitle}\nInput Mode: ${inputMode}\nTone: raw, honest, conversational.`;
       mainDraft = stripEmojis((await callGroq({ model, prompt: mainPrompt, system: mainSystem })).trim());
     } else {
-      // Professional posts now go through the random arc + guardrail pipeline.
       const result = await generateWithArcGuardrails({ model, topic, pillar, profile: activeProfile });
       mainDraft = result.content;
       arcMeta = {
@@ -702,7 +730,7 @@ app.post('/api/autopilot', async (req, res) => {
     const newDraft = {
       id: draftId, prompt: topic, content: finalContent,
       pillar: pillar || activeProfile.contentPillars[0], model,
-      arc: arcMeta, // null for personal posts, populated for professional posts
+      arc: arcMeta,
       scoringResult: { id: 'score-' + Date.now(), draftId, scores: winner.score.scores, totalScore: winner.score.totalScore, feedback: winner.score.feedback, model, createdAt: Date.now() },
       variants: variants.map(v => stripEmojis(v.content)),
       hashtags, status: 'ready', createdAt: Date.now(), updatedAt: Date.now()
