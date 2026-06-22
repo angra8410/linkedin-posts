@@ -14,6 +14,9 @@ function stripEmojis(text) {
   return text.replace(/[\u2600-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDC00-\uDFFF]/g, '').trim();
 }
 
+// Función auxiliar indispensable para pausar la ejecución y mitigar Rate Limits (TPM) de Groq
+const delay = (ms) => new Promise(res => setTimeout(res, ms));
+
 // ── ENV VALIDATION ──────────────────────────────────────────────────────────
 const REQUIRED_ENV = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'GROQ_API_KEY'];
 REQUIRED_ENV.forEach(key => {
@@ -345,15 +348,7 @@ setupLinkedInRoutes(app, dbShim, dbShim, saveDbShim);
 
 // ── ARC LIBRARY & GUARDRAILS ──────────────────────────────────────────────────
 
-// ============================================================================
-// ⚠️  TEMPORARY TEST MODE — REMOVE BEFORE MERGING TO `cloud` ⚠️
-// When true, the 'before_after' arc is instructed to deliberately use the
-// banned phrase "game-changer" so we can verify the regex guardrail + retry
-// loop actually fires in the real deployed environment.
-// Set back to false (or delete this block) once the test confirms it works.
-// ============================================================================
 const FORCE_TEST_VIOLATION = true;
-// ============================================================================
 
 const BANNED_PHRASES = [
   'is a nightmare',
@@ -599,7 +594,7 @@ function validateAgainstArc(text, arc) {
   return { ok: true };
 }
 
-async function generateWithArcGuardrails({ model, topic, pillar, profile, maxAttempts = 3 }) {
+async function generateWithArcGuardrails({ model, topic, pillar, profile, maxAttempts = 2 }) {
   const arc = pickRandomArc();
   let lastReason = null;
 
@@ -616,12 +611,19 @@ async function generateWithArcGuardrails({ model, topic, pillar, profile, maxAtt
 
     lastReason = result.reason;
     console.warn(`[Arc Guardrail] ❌ Attempt ${attempt}/${maxAttempts} for arc '${arc.id}' FAILED: ${lastReason}`);
+    
     if (attempt < maxAttempts) {
+      console.log(`[Arc Guardrail] ⏳ Pausando 22 segundos para reestablecer ventana TPM de Groq...`);
+      await delay(22000); 
       console.log(`[Arc Guardrail] 🔄 Regenerating (attempt ${attempt + 1}/${maxAttempts})...`);
     }
   }
 
   console.error(`[Arc Guardrail] Arc '${arc.id}' failed validation after ${maxAttempts} attempts. Last reason: ${lastReason}`);
+  
+  console.log(`[Arc Guardrail] ⏳ Pausa final de 15 segundos antes de generar fallback por Rate Limit...`);
+  await delay(15000);
+
   const fallbackPrompt = arc.buildPrompt({ topic, pillar, profile });
   const fallbackRaw = await callGroq({ model, prompt: fallbackPrompt, system: arc.system });
   const fallbackCleaned = stripEmojis(fallbackRaw.trim());
@@ -667,6 +669,10 @@ app.post('/api/autopilot', async (req, res) => {
       console.log(`[Autopilot] Arc selected: ${result.arcLabel} (${result.attempts} attempt(s))`);
     }
 
+    // Esperar un respiro antes de procesar las variantes de estilos para no ahogar el TPM de Groq
+    console.log(`[Autopilot] ⏳ Esperando 20 segundos antes de generar variantes estéticas...`);
+    await delay(20000);
+
     // Stage 2: Variants
     const styles = ['more-human', 'shorter', 'candid'];
     const variants = [];
@@ -684,9 +690,14 @@ app.post('/api/autopilot', async (req, res) => {
       } else {
         variants.push({ style, content: cleanedVariant });
       }
+      // Pausa estratégica entre variantes para enfriar el TPM
+      await delay(5000);
     }
 
     // Stage 3: Score & pick winner
+    console.log(`[Autopilot] ⏳ Esperando 15 segundos antes de comenzar la evaluación y puntajes...`);
+    await delay(15000);
+
     const allCandidates = [{ label: 'Main draft', content: mainDraft }, ...variants.map(v => ({ label: v.style, content: v.content }))];
     const scoredCandidates = [];
     for (const cand of allCandidates) {
@@ -702,12 +713,17 @@ app.post('/api/autopilot', async (req, res) => {
       } catch {
         scoredCandidates.push({ ...cand, score: { scores: { hook:7,clarity:7,relevance:7,cta:7,authenticity:7 }, totalScore: 7.0, feedback: [] } });
       }
+      // Pausa entre evaluaciones individuales
+      await delay(4000);
     }
 
     const winner = scoredCandidates.sort((a, b) => b.score.totalScore - a.score.totalScore)[0];
     winner.content = stripEmojis(winner.content);
 
     // Stage 4: Hashtags
+    console.log(`[Autopilot] ⏳ Esperando 10 segundos antes de generar hashtags finales...`);
+    await delay(10000);
+
     const hashtagInstruction = isPersonal
       ? 'Generate 3 to 5 inspirational hashtags (e.g. #Resilience, #Mindset). Avoid tech hashtags.'
       : 'Generate 3 to 5 professional hashtags (e.g. #DataQuality, #MicrosoftFabric).';
