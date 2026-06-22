@@ -132,6 +132,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
+        console.error('[Post Error] LinkedIn response:', response.status, JSON.stringify(data));  // ADD THIS
         return res.status(response.status).json({ error: 'Error publicando en LinkedIn', details: data });
       }
 
