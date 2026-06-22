@@ -157,6 +157,7 @@ export function promptGenerateCarousel(post: string) {
 - Subsequent slides must have a category (e.g. "FRAGMENTED DATA ECOSYSTEMS" or "COMPUTE DEPTH"), a punchy title, a brief 1-2 sentence description, and 1-2 key bullet points. Each bullet point should have a short label and a description.
 - Keep text extremely brief. Do NOT use emojis.
 - Return ONLY a valid JSON array of objects representing slides. Do not add markdown codeblocks, notes, or intros.
+- Keep each "content" field under 200 characters and each bullet "text" under 100 characters. This is critical to avoid truncation.
 Format:
 [
   {
@@ -184,8 +185,8 @@ Format:
   }
 ]`;
 
-  const user = `Convert this post into a structured strategy presentation deck:
-Post:\n${post}`;
+  const user = `Convert this post into a structured strategy presentation deck. Keep all text fields short.
+Post:\n${post.slice(0, 1500)}`;
 
   return { system, user };
 }

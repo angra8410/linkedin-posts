@@ -549,34 +549,56 @@ export default function DraftTab({ profile, settings }: Props) {
     }
   };
 
-  // Generate a structured PDF Slide layout
+// Generate a structured PDF Slide layout
   const generateSlidesLayout = async () => {
     if (!output.trim()) return;
     setGeneratingSlides(true);
     setSlides([]);
-
     try {
       const { system, user } = promptGenerateCarousel(output);
       const response = await generate(user, system, model, undefined, { temperature: 0.3 });
       
-      const cleanedJson = response.replace(/```json|```/gi, '').trim();
-      const parsedSlides = JSON.parse(cleanedJson) as CarouselSlide[];
+      // Step 1: Extract JSON array from response
+      let raw = response;
+      const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fenceMatch) {
+        raw = fenceMatch[1];
+      } else {
+        const start = raw.indexOf('[');
+        const end = raw.lastIndexOf(']');
+        if (start !== -1 && end !== -1) {
+          raw = raw.slice(start, end + 1);
+        }
+      }
+      raw = raw.trim();
       
-      // Auto-assign vector graphics with rotating distribution to ensure variety (no duplicates)
+      // Step 2: Repair common JSON issues
+      raw = raw
+        .replace(/,\s*([}\]])/g, '$1')
+        .replace(/([{,]\s*)(\w+)\s*:/g, '$1"$2":')
+        .replace(/:\s*'([^']*)'/g, ': "$1"');
+      
+      // Step 3: Parse with salvage fallback
+      let parsedSlides: CarouselSlide[];
+      try {
+        parsedSlides = JSON.parse(raw);
+      } catch {
+        const lastComplete = raw.lastIndexOf('},');
+        if (lastComplete !== -1) {
+          parsedSlides = JSON.parse(raw.slice(0, lastComplete + 1) + ']');
+        } else {
+          throw new Error('Could not parse slide JSON from model response.');
+        }
+      }
+      
+      // Step 4: Assign vector graphics
       const slidesWithGraphics = parsedSlides.map((slide, idx) => {
         const types = ['database', 'circuits', 'code', 'network', 'charts'];
-        const type = types[idx % types.length];
-        
-        const base64 = generateTechVectorGraphic(type);
-        return {
-          ...slide,
-          image: base64
-        };
+        const base64 = generateTechVectorGraphic(types[idx % types.length]);
+        return { ...slide, image: base64 };
       });
-      
       setSlides(slidesWithGraphics);
       
-      // Update draft in database
       if (savedDraft) {
         const updatedDraft = { ...savedDraft, carouselSlides: slidesWithGraphics };
         await fetch('/api/drafts', {
