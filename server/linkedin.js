@@ -108,7 +108,7 @@ export function setupLinkedInRoutes(app, db, dbShim, saveDb) {
         visibility: 'PUBLIC',
         distribution: {
           feedDistribution: 'MAIN_FEED',
-          targeter: { requestFilters: [] }
+          
         }
       };
 
