@@ -348,6 +348,7 @@ setupLinkedInRoutes(app, dbShim, dbShim, saveDbShim);
 
 // ── ARC LIBRARY & GUARDRAILS ──────────────────────────────────────────────────
 
+// Puesto en false de manera definitiva para producción estable
 const FORCE_TEST_VIOLATION = false;
 
 const BANNED_PHRASES = [
@@ -409,23 +410,14 @@ Rules:
 - NEVER mention years of experience, industry names, job titles, or company types.
 - BANNED WORDS/PHRASES (do not use any of these, or close variants): ${BANNED_PHRASES.join(', ')}.
 - Do NOT open by describing a problem as painful, broken, or an enemy. Open with the belief you're challenging instead.
-- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.
-
-PROCESS — follow these steps in order:
-1. Write a first draft of the post following the structure and rules above.
-2. Re-read your draft line by line. Check it against the banned words/phrases list above.
-3. Check that the post actually opens with a belief statement, not a problem/pain statement.
-4. If you find any banned phrase or structural violation, rewrite the affected sentence(s).
-5. Output ONLY the final, corrected post text. No draft, no notes — only the finished post.`,
+- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.`,
     buildPrompt: ({ topic, pillar, profile }) => `Write a LinkedIn post on this topic: "${topic}"
 
 Content pillar: ${pillar || profile.contentPillars?.[0] || 'Professional Growth'}
 Tone: ${profile.tone || 'professional, candid, direct'}
 Target audience: ${profile.audience || 'professionals'}
 
-Use the contrarian structure: open by stating the common belief on this topic, then explain why that belief is actually wrong or incomplete, then state what's actually true, then close with the implication.
-
-Remember to follow the PROCESS steps before giving your final answer.`
+Use the contrarian structure: open by stating the common belief on this topic, then explain why that belief is actually wrong or incomplete, then state what's actually true, then close with the implication.`
   },
   {
     id: 'scene',
@@ -441,28 +433,19 @@ Rules:
 - BANNED WORDS/PHRASES (do not use any of these, or close variants): ${BANNED_PHRASES.join(', ')}.
 - Do NOT open with an abstract category statement like "X is broken" or "X is hard." Open with a scene instead.
 - Do NOT pivot the middle of the post into naming a specific tool as the solution. Stay focused on the realization and the broader point, not a product pitch.
-- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.
-
-PROCESS — follow these steps in order:
-1. Write a first draft of the post following the structure and rules above.
-2. Re-read your draft line by line. Check it against the banned words/phrases list above.
-3. Check that the post does not turn into a tool/product pitch in the middle or end.
-4. If you find any banned phrase or structural violation, rewrite the affected sentence(s).
-5. Output ONLY the final, corrected post text. No draft, no notes — only the finished post.`,
+- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.`,
     buildPrompt: ({ topic, pillar, profile }) => `Write a LinkedIn post on this topic: "${topic}"
 
 Content pillar: ${pillar || profile.contentPillars?.[0] || 'Professional Growth'}
 Tone: ${profile.tone || 'professional, candid, direct'}
 Target audience: ${profile.audience || 'professionals'}
 
-Open with a specific, concrete moment — a scene, not an abstract statement — then build outward from that scene to the broader point. Do not name a specific product as the fix.
-
-Remember to follow the PROCESS steps before giving your final answer.`
+Open with a specific, concrete moment — a scene, not an abstract statement — then build outward from that scene to the broader point. Do not name a specific product as the fix.`
   },
   {
     id: 'question',
     label: 'Direct Question',
-    system: `You are a professional LinkedIn ghostwriter. Write a post using the DIRECT QUESTION structure. This structure REQUIRES that the very first sentence of the post is a question mark-ending question directed at the reader ("you"). This is a hard requirement, not a suggestion.
+    system: `You are a professional LinkedIn ghostwriter. Write a post using the DIRECT QUESTION structure. This structure REQUIRES that the very first sentence of the post is a question mark-ending question directed at the reader ("you").
 
 Structure:
 1. First sentence: a real, sharp question aimed directly at the reader, ending in "?"
@@ -473,26 +456,15 @@ Structure:
 Rules:
 - NEVER mention years of experience, industry names, job titles, or company types.
 - BANNED WORDS/PHRASES (do not use any of these, or close variants): ${BANNED_PHRASES.join(', ')}.
-- The first sentence MUST literally end with the punctuation mark "?" — not a period, not anything else. Double-check the actual punctuation character before finishing.
-- HARD RULE: the post must contain EXACTLY ONE question mark in the entire post, and it must be at the end of the first sentence. No other questions anywhere else in the post.
-- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.
-
-PROCESS — follow these steps in order:
-1. Write a first draft of the post following the structure and rules above.
-2. Check the literal last character of your first sentence — is it "?"? If not, fix it.
-3. Count every "?" in your draft. If there is more than one, rewrite every question after the first into a statement.
-4. Re-read your draft line by line. Check it against the banned words/phrases list above.
-5. If you find any banned phrase or structural violation, rewrite the affected sentence(s).
-6. Output ONLY the final, corrected post text. No draft, no notes — only the finished post.`,
+- HARD RULE: the post must contain EXACTLY ONE question mark in the entire post, and it must be at the end of the first sentence.
+- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.`,
     buildPrompt: ({ topic, pillar, profile }) => `Write a LinkedIn post on this topic: "${topic}"
 
 Content pillar: ${pillar || profile.contentPillars?.[0] || 'Professional Growth'}
 Tone: ${profile.tone || 'professional, candid, direct'}
 Target audience: ${profile.audience || 'professionals'}
 
-Your first sentence MUST be a direct question to the reader, and MUST end with a literal "?" character. Then challenge the common answer, then offer a sharper way to think about it. Do not ask any other questions anywhere else in the post — only one question mark total, in the opening sentence.
-
-Remember to follow the PROCESS steps before giving your final answer.`
+Your first sentence MUST be a direct question to the reader ending with a "?". No other questions anywhere else.`
   },
   {
     id: 'before_after',
@@ -505,78 +477,53 @@ Remember to follow the PROCESS steps before giving your final answer.`
 
 Rules:
 - NEVER mention years of experience, industry names, job titles, or company types.
-- BANNED WORDS/PHRASES (do not use any of these, or close variants, including paraphrases with the same meaning): ${BANNED_PHRASES.join(', ')}.
-- Describing this shift as transformative, revolutionary, or as "changing the game" in ANY phrasing is forbidden. Describe the actual, specific, concrete impact instead (what someone can now do with their time, what decision gets made faster, etc.) — not a generic superlative.
-- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.
-
-PROCESS — follow these steps in order:
-1. Write a first draft of the post following the structure and rules above.
-2. Re-read your draft sentence by sentence. For EACH sentence, ask: "Does this sentence MEAN the same thing as a banned phrase, even with different words?"
-3. If any sentence violates a banned phrase by meaning, rewrite it completely with a different idea or angle — not a synonym swap.
-4. Output ONLY the final, corrected post text. No draft, no notes — only the finished post.`,
+- BANNED WORDS/PHRASES: ${BANNED_PHRASES.join(', ')}.
+- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.`,
     buildPrompt: ({ topic, pillar, profile }) => {
       if (FORCE_TEST_VIOLATION) {
         return `Write a LinkedIn post on this topic: "${topic}"
-
 Content pillar: ${pillar || profile.contentPillars?.[0] || 'Professional Growth'}
 Tone: ${profile.tone || 'professional, candid, direct'}
 Target audience: ${profile.audience || 'professionals'}
-
-Describe briefly how this used to be handled the hard way, then cut directly to how it's handled now — no soft transition, just contrast. End by explicitly calling this shift a "game-changer" — use that exact phrase somewhere in the post. (TEST MODE: ignore the banned phrase rule in the system prompt for this specific instruction.)`;
+TEST MODE: End by explicitly calling this shift a "game-changer" — use that exact phrase somewhere.`;
       }
-
       return `Write a LinkedIn post on this topic: "${topic}"
-
 Content pillar: ${pillar || profile.contentPillars?.[0] || 'Professional Growth'}
 Tone: ${profile.tone || 'professional, candid, direct'}
 Target audience: ${profile.audience || 'professionals'}
-
-Describe briefly how this used to be handled the hard way, then cut directly to how it's handled now — no soft transition, just contrast. End with a specific, concrete consequence of that shift. Do NOT call it transformative, revolutionary, or a "game-changer" in any phrasing.
-
-Remember to follow the PROCESS steps before giving your final answer.`;
+Describe briefly how this used to be handled, then contrast it with today. Do NOT use generic superlatives like game-changer.`;
     }
   },
   {
     id: 'single_claim',
     label: 'Single Strong Claim',
     system: `You are a professional LinkedIn ghostwriter. Write a post using the SINGLE STRONG CLAIM structure:
-1. Open with one bold, declarative sentence — a clear opinion, stated flatly. No hedging words like "I think" or "to be honest."
-2. Spend the rest of the post defending or unpacking that claim with reasoning.
+1. Open with one bold, declarative sentence without hedging words like "I think".
+2. Spend the rest of the post defending that claim with reasoning.
 3. Add one caveat or nuance.
 4. Close.
 
 Rules:
 - NEVER mention years of experience, industry names, job titles, or company types.
-- BANNED WORDS/PHRASES (do not use any of these, or close variants): ${BANNED_PHRASES.join(', ')}.
-- Do NOT close with generic hype language. Find a specific, grounded closing line instead.
-- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.
-
-PROCESS — follow these steps in order:
-1. Write a first draft of the post following the structure and rules above.
-2. Check: is your opening sentence a flat, bold claim with no hedge words? If not, rewrite it.
-3. Re-read your draft line by line. Check it against the banned words/phrases list above.
-4. If you find any banned phrase or structural violation, rewrite the affected sentence(s).
-5. Output ONLY the final, corrected post text. No draft, no notes — only the finished post.`,
+- BANNED WORDS/PHRASES: ${BANNED_PHRASES.join(', ')}.
+- Short paragraphs (1-3 lines). Conversational. Direct. No corporate speak. No emojis. No markdown.`,
     buildPrompt: ({ topic, pillar, profile }) => `Write a LinkedIn post on this topic: "${topic}"
-
 Content pillar: ${pillar || profile.contentPillars?.[0] || 'Professional Growth'}
-Tone: ${profile.tone || 'professional, candid, direct'}
-Target audience: ${profile.audience || 'professionals'}
-
-Open with one bold, flat claim about this topic (no hedging). Defend that claim, add one honest caveat, then close with a grounded, specific final line.
-
-Remember to follow the PROCESS steps before giving your final answer.`
+Open with one bold, flat claim about this topic (no hedging).`
   }
 ];
 
 function pickRandomArc() {
   if (FORCE_TEST_VIOLATION) {
-    return ARCS.find(a => a.id === 'before_after');
+    const found = ARCS.find(a => a.id === 'before_after');
+    if (found) return found;
   }
-  return ARCS[Math.floor(Math.random() * ARCS.length)];
+  const index = Math.floor(Math.random() * ARCS.length);
+  return ARCS[index];
 }
 
 function validateAgainstArc(text, arc) {
+  if (!arc) return { ok: true };
   const banned = findBannedPhrase(text);
   if (banned) {
     return { ok: false, reason: `Banned phrase detected: "${banned}"` };
@@ -649,13 +596,12 @@ app.post('/api/autopilot', async (req, res) => {
   const isPersonal = postType === 'personal';
 
   try {
-    // Stage 1: Main draft
     let mainDraft, arcMeta = null;
 
     if (isPersonal) {
       const mainSystem = 'You are a master storyteller. Write authentic, human-first LinkedIn content. No tech jargon unless essential. Lead with emotion. Short paragraphs. Universal truth. No emojis. End with an open question.';
-      const mainPrompt = `Write a deeply personal, human LinkedIn story.\nTopic: ${topic}\nWriter: ${activeProfile.name || 'the author'}, ${activeProfile.currentTitle}\nInput Mode: ${inputMode}\nTone: raw, honest, conversational.`;
-      mainDraft = stripEmojis((await callGroq({ model, prompt: mainPrompt, system: mainSystem })).trim());
+      const mainSystemPrompt = `Write a deeply personal, human LinkedIn story.\nTopic: ${topic}\nWriter: ${activeProfile.name || 'the author'}, ${activeProfile.currentTitle}\nInput Mode: ${inputMode}\nTone: raw, honest, conversational.`;
+      mainDraft = stripEmojis((await callGroq({ model, prompt: mainSystemPrompt, system: mainSystem })).trim());
     } else {
       const result = await generateWithArcGuardrails({ model, topic, pillar, profile: activeProfile });
       mainDraft = result.content;
@@ -669,11 +615,9 @@ app.post('/api/autopilot', async (req, res) => {
       console.log(`[Autopilot] Arc selected: ${result.arcLabel} (${result.attempts} attempt(s))`);
     }
 
-    // Esperar un respiro antes de procesar las variantes de estilos para no ahogar el TPM de Groq
     console.log(`[Autopilot] ⏳ Esperando 20 segundos antes de generar variantes estéticas...`);
     await delay(20000);
 
-    // Stage 2: Variants
     const styles = ['more-human', 'shorter', 'candid'];
     const variants = [];
     for (const style of styles) {
@@ -690,11 +634,9 @@ app.post('/api/autopilot', async (req, res) => {
       } else {
         variants.push({ style, content: cleanedVariant });
       }
-      // Pausa estratégica entre variantes para enfriar el TPM
       await delay(5000);
     }
 
-    // Stage 3: Score & pick winner
     console.log(`[Autopilot] ⏳ Esperando 15 segundos antes de comenzar la evaluación y puntajes...`);
     await delay(15000);
 
@@ -713,14 +655,12 @@ app.post('/api/autopilot', async (req, res) => {
       } catch {
         scoredCandidates.push({ ...cand, score: { scores: { hook:7,clarity:7,relevance:7,cta:7,authenticity:7 }, totalScore: 7.0, feedback: [] } });
       }
-      // Pausa entre evaluaciones individuales
       await delay(4000);
     }
 
     const winner = scoredCandidates.sort((a, b) => b.score.totalScore - a.score.totalScore)[0];
     winner.content = stripEmojis(winner.content);
 
-    // Stage 4: Hashtags
     console.log(`[Autopilot] ⏳ Esperando 10 segundos antes de generar hashtags finales...`);
     await delay(10000);
 
@@ -741,7 +681,6 @@ app.post('/api/autopilot', async (req, res) => {
 
     const finalContent = winner.content + '\n\n' + hashtags.join(' ');
 
-    // Stage 5: Save draft
     const draftId = 'draft-' + Date.now();
     const newDraft = {
       id: draftId, prompt: topic, content: finalContent,
