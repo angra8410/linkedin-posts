@@ -348,7 +348,7 @@ setupLinkedInRoutes(app, dbShim, dbShim, saveDbShim);
 
 // ── ARC LIBRARY & GUARDRAILS ──────────────────────────────────────────────────
 
-const FORCE_TEST_VIOLATION = true;
+const FORCE_TEST_VIOLATION = false;
 
 const BANNED_PHRASES = [
   'is a nightmare',
