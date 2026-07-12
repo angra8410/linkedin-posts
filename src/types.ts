@@ -123,7 +123,9 @@ export interface PerformanceLog {
   postTitle: string;
   postedAt: number;
   pillar: string;
+  hashtags?: string[];
   format: "list" | "story" | "insight" | "question" | "data";
+  mediaFormat?: "carousel" | "video" | "text";
   impressions: number;
   reactions: number;
   comments: number;

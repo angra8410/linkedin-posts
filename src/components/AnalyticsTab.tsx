@@ -1,3 +1,4 @@
+/// <reference types="react" />
 import React, { useEffect, useState, useRef } from 'react';
 import { PerformanceLog, PostDraft } from '../types';
 import * as XLSX from 'xlsx';
@@ -15,6 +16,8 @@ interface ParsedCSVPost {
   engagements: number;
   impressions?: number;
   pillar: string;
+  hashtags?: string[];
+  mediaFormat?: 'carousel' | 'video' | 'text';
   title: string;
   isMatched: boolean;
   matchedDraftId?: string;
@@ -228,6 +231,14 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
           title = cleanedTitle.substring(0, 40) + (cleanedTitle.length > 40 ? '...' : '');
         }
 
+        const inferredMediaFormat: 'carousel' | 'video' | 'text' | undefined = matchedDraft
+          ? matchedDraft.carouselSlides && matchedDraft.carouselSlides.length > 0
+            ? 'carousel'
+            : matchedDraft.videoUrn
+            ? 'video'
+            : 'text'
+          : undefined;
+
         return {
           url: tp.url,
           postId: tp.postId,
@@ -235,6 +246,8 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
           engagements: tp.engagements ?? 0,
           impressions: tp.impressions,
           pillar: matchedPillar,
+          hashtags: matchedDraft?.hashtags,
+          mediaFormat: inferredMediaFormat,
           title: title || `LinkedIn Share #${tp.postId.substring(0, 6)}`,
           isMatched: !!matchedDraft,
           matchedDraftId: matchedDraft?.id
@@ -285,6 +298,8 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         postTitle: p.title,
         postedAt: p.publishDate,
         pillar: p.pillar,
+        hashtags: p.hashtags,
+        mediaFormat: p.mediaFormat,
         format: p.url.includes('document') ? ('data' as const) : ('insight' as const),
         impressions: hasRealImpressions ? p.impressions! : p.engagements * 12,
         reactions: p.engagements,
@@ -346,6 +361,63 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
   const pillarChartData = getPillarData();
   const maxImpressions = Math.max(...pillarChartData.map(d => d.impressions), 1);
   const maxEngagement = Math.max(...pillarChartData.map(d => d.avgEngagement), 1);
+
+  // Aggregated data by hashtag — fan-out: a post with 3 hashtags counts once per hashtag
+  const getHashtagData = () => {
+    const dataMap: Record<string, { impressions: number, engagement: number, count: number }> = {};
+
+    logsList.forEach(log => {
+      const tags = log.hashtags && log.hashtags.length > 0 ? log.hashtags : [];
+      tags.forEach(tag => {
+        if (!dataMap[tag]) {
+          dataMap[tag] = { impressions: 0, engagement: 0, count: 0 };
+        }
+        dataMap[tag].impressions += log.impressions || 0;
+        dataMap[tag].engagement += (log.reactions || 0) + (log.comments || 0) + (log.reposts || 0);
+        dataMap[tag].count += 1;
+      });
+    });
+
+    return Object.entries(dataMap)
+      .map(([name, val]) => ({
+        name,
+        impressions: val.impressions,
+        count: val.count,
+        avgImpressions: val.count > 0 ? Math.round(val.impressions / val.count) : 0,
+        avgEngagement: val.count > 0 ? Math.round(val.engagement / val.count) : 0
+      }))
+      .sort((a, b) => b.avgEngagement - a.avgEngagement);
+  };
+
+  // Aggregated data by media format (carousel / video / text)
+  const getMediaFormatData = () => {
+    const dataMap: Record<string, { impressions: number, engagement: number, count: number }> = {};
+
+    logsList.forEach(log => {
+      const fmt = log.mediaFormat || 'Unknown';
+      if (!dataMap[fmt]) {
+        dataMap[fmt] = { impressions: 0, engagement: 0, count: 0 };
+      }
+      dataMap[fmt].impressions += log.impressions || 0;
+      dataMap[fmt].engagement += (log.reactions || 0) + (log.comments || 0) + (log.reposts || 0);
+      dataMap[fmt].count += 1;
+    });
+
+    return Object.entries(dataMap).map(([name, val]) => ({
+      name,
+      impressions: val.impressions,
+      count: val.count,
+      avgImpressions: val.count > 0 ? Math.round(val.impressions / val.count) : 0,
+      avgEngagement: val.count > 0 ? Math.round(val.engagement / val.count) : 0
+    }));
+  };
+
+  const hashtagChartData = getHashtagData().slice(0, 10); // top 10 by avg engagement, keeps chart readable
+  const maxHashtagEngagement = Math.max(...hashtagChartData.map(d => d.avgEngagement), 1);
+
+  const mediaFormatChartData = getMediaFormatData();
+  const maxMediaFormatImpressions = Math.max(...mediaFormatChartData.map(d => d.impressions), 1);
+  const maxMediaFormatEngagement = Math.max(...mediaFormatChartData.map(d => d.avgEngagement), 1);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -567,6 +639,62 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
                 );
               })}
             </div>
+          </div>
+
+        </div>
+      )}
+
+      {/* Hashtag & Media Format Analytics */}
+      {logsList.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+
+          <div className="card-panel">
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>Avg Engagement by Hashtag (Top 10)</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              A post counts once per hashtag it carries. Hover a bar to see post count.
+            </p>
+
+            {hashtagChartData.length === 0 ? (
+              <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.85rem' }}>
+                No hashtag data yet — re-import your weekly file to backfill hashtags onto existing logs.
+              </div>
+            ) : (
+              <div className="chart-container">
+                {hashtagChartData.map(d => {
+                  const pct = (d.avgEngagement / maxHashtagEngagement) * 100;
+                  return (
+                    <div key={d.name} className="chart-bar-wrapper" title={`${d.count} post${d.count === 1 ? '' : 's'}`}>
+                      <div className="chart-bar" style={{ height: `${Math.max(pct, 4)}%`, background: 'var(--accent-gradient)' }}>
+                        <span className="chart-bar-value">{d.avgEngagement}</span>
+                      </div>
+                      <span className="chart-bar-label">{d.name} ({d.count})</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="card-panel">
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>Impressions & Engagement by Format</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Carousel vs. video vs. text-only</p>
+
+            {mediaFormatChartData.length === 0 ? (
+              <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.85rem' }}>
+                No media format data yet.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
+                {mediaFormatChartData.map(d => (
+                  <div key={d.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.6rem 0.9rem', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                    <span style={{ textTransform: 'capitalize', fontWeight: '600' }}>{d.name} <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>({d.count})</span></span>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                      Avg impressions: <strong>{d.avgImpressions}</strong> · Avg engagement: <strong style={{ color: '#3b82f6' }}>{d.avgEngagement}</strong>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
         </div>
