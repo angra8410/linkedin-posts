@@ -140,37 +140,49 @@ export default function AnalyticsTab({ logsList, onRefetchLogs }: Props) {
 
           // 4. Auto-classify Pillar from URL slug tokens
           // e.g. antonio-gutierrez-data_dataquality-datagovernance...
-          let matchedPillar = 'General';
-          const urlLower = rawUrl.toLowerCase();
-          
-          // Map keywords to standard pillars
-          if (urlLower.includes('quality') || urlLower.includes('governance')) {
-            matchedPillar = 'Data Quality vs Data Volume';
-          } else if (urlLower.includes('ollama') || urlLower.includes('agent') || urlLower.includes('llm')) {
-            matchedPillar = 'Local LLMs & AI Agents';
-          } else if (urlLower.includes('architecture') || urlLower.includes('design') || urlLower.includes('fabric')) {
-            matchedPillar = 'System Design & Architecture';
-          }
-
-          // 5. Generate a human-readable title snippet from the URL slug
-          const slugMatch = rawUrl.match(/posts\/([a-zA-Z0-9\-_]+)/);
-          const slug = slugMatch ? slugMatch[1] : '';
-          const cleanedTitle = slug
-            .replace(/^antoniogutierrez-data_/i, '')
-            .replace(/-(?:ugcPost|share|activity|document).*$/i, '')
-            .split('_')
-            .join(' ')
-            .split('-')
-            .join(' ');
-          
-          const title = cleanedTitle.substring(0, 40) + (cleanedTitle.length > 40 ? '...' : '');
-
-          // 6. Reconcile against existing drafts
           const matchedDraft = allDrafts.find(d => 
             (d.linkedinPostId && d.linkedinPostId.includes(postId)) ||
             (d.content && d.content.toLowerCase().includes(postId))
           );
+          
+          // 5. Pillar: use the matched draft's real pillar. Only fall back to
+          // slug keyword-guessing for historical posts with no matching draft.
+          let matchedPillar = 'General';
+          if (matchedDraft?.pillar) {
+            matchedPillar = matchedDraft.pillar;
+          } else {
+            const urlLower = rawUrl.toLowerCase();
+            if (urlLower.includes('quality') || urlLower.includes('governance')) {
+              matchedPillar = 'Data Quality vs Data Volume';
+            } else if (urlLower.includes('ollama') || urlLower.includes('agent') || urlLower.includes('llm')) {
+              matchedPillar = 'Local LLMs & AI Agents';
+            } else if (urlLower.includes('architecture') || urlLower.includes('design') || urlLower.includes('fabric')) {
+              matchedPillar = 'System Design & Architecture';
+            } else if (urlLower.includes('powerbi') || urlLower.includes('power-bi')) {
+              matchedPillar = 'Power BI';
+            }
+          }
 
+          // 6. Generate a human-readable title snippet — prefer the draft's own
+          // content over a URL-slug guess, since we now have it.
+          let title: string;
+          if (matchedDraft?.content) {
+            const cleaned = matchedDraft.content.replace(/\n+/g, ' ').trim();
+            title = cleaned.substring(0, 40) + (cleaned.length > 40 ? '...' : '');
+          } else {
+            const slugMatch = rawUrl.match(/posts\/([a-zA-Z0-9\-_]+)/);
+            const slug = slugMatch ? slugMatch[1] : '';
+            const cleanedTitle = slug
+              .replace(/^antoniogutierrez-data_/i, '')
+              .replace(/-(?:ugcPost|share|activity|document).*$/i, '')
+              .split('_')
+              .join(' ')
+              .split('-')
+              .join(' ');
+            title = cleanedTitle.substring(0, 40) + (cleanedTitle.length > 40 ? '...' : '');
+          }
+  
+           // 7. Push the fully-resolved row into the working array
           tempParsed.push({
             url: rawUrl,
             postId,
