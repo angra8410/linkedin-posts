@@ -119,6 +119,7 @@ export interface ScoringResult {
 export interface PerformanceLog {
   id: string;
   sourceDraftId?: string;
+  linkedinPostId?: string;
   postTitle: string;
   postedAt: number;
   pillar: string;

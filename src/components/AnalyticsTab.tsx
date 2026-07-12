@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { PerformanceLog, PostDraft } from '../types';
+import * as XLSX from 'xlsx';
+
 
 interface Props {
   logsList: PerformanceLog[];
@@ -11,6 +13,7 @@ interface ParsedCSVPost {
   postId: string;
   publishDate: number;
   engagements: number;
+  impressions?: number;
   pillar: string;
   title: string;
   isMatched: boolean;
@@ -87,144 +90,166 @@ export default function AnalyticsTab({ logsList, onRefetchLogs }: Props) {
     }
   };
 
-  // CSV parsing & ID extraction engine
-  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+// XLSX parsing & ID extraction engine
+const extractPostId = (rawUrl: string): string => {
+  const idMatch =
+    rawUrl.match(/(?:ugcPost|share|activity|document|posts)-([0-9]{15,})/i) ||
+    rawUrl.match(/-([0-9]{15,})/);
+  return idMatch ? idMatch[1] : '';
+};
 
-    setCsvFileName(file.name);
-    const reader = new FileReader();
-
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      if (!text) return;
-
-      try {
-        // Split by lines
-        const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
-        if (lines.length < 2) throw new Error('CSV is empty or lacks headers');
-
-        // Parse headers (handling potential quotes)
-        const headers = parseCSVLine(lines[0]);
-        const urlIdx = headers.findIndex(h => h.toLowerCase().includes('post url') || h.toLowerCase() === 'url');
-        const dateIdx = headers.findIndex(h => h.toLowerCase().includes('date') || h.toLowerCase().includes('publish'));
-        const engagementIdx = headers.findIndex(h => h.toLowerCase().includes('engagement') || h.toLowerCase().includes('reactions'));
-
-        if (urlIdx === -1) {
-          throw new Error("Could not find a 'Post URL' column in the CSV.");
-        }
-
-        const tempParsed: ParsedCSVPost[] = [];
-
-        for (let i = 1; i < lines.length; i++) {
-          const cols = parseCSVLine(lines[i]);
-          if (cols.length < headers.length) continue; // skip incomplete rows
-
-          const rawUrl = cols[urlIdx]?.trim() || '';
-          if (!rawUrl.startsWith('http')) continue;
-
-          // 1. Extract 19-digit post ID URN using Regex
-          // Matches e.g. ugcPost-7464004903351382016 or share-7467735113334669312
-          const idMatch = rawUrl.match(/(?:ugcPost|share|activity|document|posts)-([0-9]{15,})/i) || rawUrl.match(/-([0-9]{15,})/);
-          const postId = idMatch ? idMatch[1] : '';
-          
-          if (!postId) continue; // skip if we cannot resolve a valid ID
-
-          // 2. Parse Publish Date
-          const rawDate = dateIdx > -1 ? cols[dateIdx] : '';
-          const publishDate = rawDate ? new Date(rawDate).getTime() : Date.now();
-
-          // 3. Parse Engagements
-          const rawEng = engagementIdx > -1 ? cols[engagementIdx].replace(/,/g, '') : '0';
-          const engagements = parseInt(rawEng) || 0;
-
-          // 4. Auto-classify Pillar from URL slug tokens
-          // e.g. antonio-gutierrez-data_dataquality-datagovernance...
-          const matchedDraft = allDrafts.find(d => 
-            (d.linkedinPostId && d.linkedinPostId.includes(postId)) ||
-            (d.content && d.content.toLowerCase().includes(postId))
-          );
-          
-          // 5. Pillar: use the matched draft's real pillar. Only fall back to
-          // slug keyword-guessing for historical posts with no matching draft.
-          let matchedPillar = 'General';
-          if (matchedDraft?.pillar) {
-            matchedPillar = matchedDraft.pillar;
-          } else {
-            const urlLower = rawUrl.toLowerCase();
-            if (urlLower.includes('quality') || urlLower.includes('governance')) {
-              matchedPillar = 'Data Quality vs Data Volume';
-            } else if (urlLower.includes('ollama') || urlLower.includes('agent') || urlLower.includes('llm')) {
-              matchedPillar = 'Local LLMs & AI Agents';
-            } else if (urlLower.includes('architecture') || urlLower.includes('design') || urlLower.includes('fabric')) {
-              matchedPillar = 'System Design & Architecture';
-            } else if (urlLower.includes('powerbi') || urlLower.includes('power-bi')) {
-              matchedPillar = 'Power BI';
-            }
-          }
-
-          // 6. Generate a human-readable title snippet — prefer the draft's own
-          // content over a URL-slug guess, since we now have it.
-          let title: string;
-          if (matchedDraft?.content) {
-            const cleaned = matchedDraft.content.replace(/\n+/g, ' ').trim();
-            title = cleaned.substring(0, 40) + (cleaned.length > 40 ? '...' : '');
-          } else {
-            const slugMatch = rawUrl.match(/posts\/([a-zA-Z0-9\-_]+)/);
-            const slug = slugMatch ? slugMatch[1] : '';
-            const cleanedTitle = slug
-              .replace(/^antoniogutierrez-data_/i, '')
-              .replace(/-(?:ugcPost|share|activity|document).*$/i, '')
-              .split('_')
-              .join(' ')
-              .split('-')
-              .join(' ');
-            title = cleanedTitle.substring(0, 40) + (cleanedTitle.length > 40 ? '...' : '');
-          }
-  
-           // 7. Push the fully-resolved row into the working array
-          tempParsed.push({
-            url: rawUrl,
-            postId,
-            publishDate,
-            engagements,
-            pillar: matchedPillar,
-            title: title || `LinkedIn Share #${postId.substring(0, 6)}`,
-            isMatched: !!matchedDraft,
-            matchedDraftId: matchedDraft?.id
-          });
-        }
-
-        setParsedPosts(tempParsed);
-      } catch (err: any) {
-        alert(`Failed to parse CSV: ${err.message}`);
-        setParsedPosts([]);
-      }
-    };
-
-    reader.readAsText(file);
-  };
-
-  // Helper to correctly parse CSV lines handling quotes
-  const parseCSVLine = (line: string): string[] => {
-    const result: string[] = [];
-    let curVal = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (char === ',' && !inQuotes) {
-        result.push(curVal.replace(/^"|"$/g, ''));
-        curVal = '';
-      } else {
-        curVal += char;
-      }
+const findHeaderRowIndex = (rows: any[][]): number => {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i] || [];
+    if (row.some(cell => typeof cell === 'string' && cell.toLowerCase().includes('post url'))) {
+      return i;
     }
-    result.push(curVal.replace(/^"|"$/g, ''));
-    return result;
+  }
+  return -1;
+};
+
+interface TopPostRaw {
+  postId: string;
+  url: string;
+  publishDate: number;
+  engagements?: number;
+  impressions?: number;
+}
+
+const parseTopPostsSheet = (sheet: XLSX.WorkSheet): TopPostRaw[] => {
+  const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+  const headerIdx = findHeaderRowIndex(rows);
+  if (headerIdx === -1) {
+    throw new Error('Could not find a "Post URL" header in the TOP POSTS sheet.');
+  }
+
+  const headerRow = (rows[headerIdx] || []).map(c => (c ?? '').toString().toLowerCase());
+  const urlCols = headerRow.reduce<number[]>(
+    (acc, cell, idx) => (cell.includes('post url') ? [...acc, idx] : acc),
+    []
+  );
+  if (urlCols.length === 0) {
+    throw new Error('No "Post URL" columns found in the TOP POSTS sheet.');
+  }
+
+  const merged = new Map<string, TopPostRaw>();
+
+  urlCols.forEach((urlCol, blockIdx) => {
+    const dateCol = urlCol + 1;
+    const metricCol = urlCol + 2;
+    const metricHeader = headerRow[metricCol] || '';
+    const isImpressionBlock = metricHeader.includes('impression');
+    const isEngagementBlock = metricHeader.includes('engagement');
+
+    for (let r = headerIdx + 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const rawUrl = row[urlCol];
+      if (typeof rawUrl !== 'string' || !rawUrl.startsWith('http')) continue;
+
+      const postId = extractPostId(rawUrl);
+      if (!postId) continue;
+
+      const rawDate = row[dateCol];
+      const publishDate = rawDate ? new Date(rawDate).getTime() : Date.now();
+      const rawMetric = row[metricCol];
+      const metricValue =
+        typeof rawMetric === 'number' ? rawMetric : parseInt(String(rawMetric ?? '0').replace(/,/g, '')) || 0;
+
+      const existing = merged.get(postId) ?? { postId, url: rawUrl, publishDate };
+      if (isImpressionBlock) {
+        existing.impressions = metricValue;
+      } else if (isEngagementBlock) {
+        existing.engagements = metricValue;
+      } else {
+        if (blockIdx === 0) existing.engagements = metricValue;
+        else existing.impressions = metricValue;
+      }
+      merged.set(postId, existing);
+    }
+  });
+
+  return Array.from(merged.values());
+};
+
+const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  setCsvFileName(file.name);
+  const reader = new FileReader();
+
+  reader.onload = (event) => {
+    try {
+      const data = new Uint8Array(event.target?.result as ArrayBuffer);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames.find(n => n.toUpperCase().includes('TOP POSTS'));
+      if (!sheetName) {
+        throw new Error('Could not find a "TOP POSTS" sheet in this file.');
+      }
+
+      const topPosts = parseTopPostsSheet(workbook.Sheets[sheetName]);
+
+      const tempParsed: ParsedCSVPost[] = topPosts.map(tp => {
+        const matchedDraft = allDrafts.find(d =>
+          (d.linkedinPostId && d.linkedinPostId.includes(tp.postId)) ||
+          (d.content && d.content.toLowerCase().includes(tp.postId))
+        );
+
+        let matchedPillar = 'General';
+        if (matchedDraft?.pillar) {
+          matchedPillar = matchedDraft.pillar;
+        } else {
+          const urlLower = tp.url.toLowerCase();
+          if (urlLower.includes('quality') || urlLower.includes('governance')) {
+            matchedPillar = 'Data Quality vs Data Volume';
+          } else if (urlLower.includes('ollama') || urlLower.includes('agent') || urlLower.includes('llm')) {
+            matchedPillar = 'Local LLMs & AI Agents';
+          } else if (urlLower.includes('architecture') || urlLower.includes('design') || urlLower.includes('fabric')) {
+            matchedPillar = 'System Design & Architecture';
+          } else if (urlLower.includes('powerbi') || urlLower.includes('power-bi')) {
+            matchedPillar = 'Power BI';
+          }
+        }
+
+        let title: string;
+        if (matchedDraft?.content) {
+          const cleaned = matchedDraft.content.replace(/\n+/g, ' ').trim();
+          title = cleaned.substring(0, 40) + (cleaned.length > 40 ? '...' : '');
+        } else {
+          const slugMatch = tp.url.match(/posts\/([a-zA-Z0-9\-_]+)/);
+          const slug = slugMatch ? slugMatch[1] : '';
+          const cleanedTitle = slug
+            .replace(/^antoniogutierrez-data_/i, '')
+            .replace(/-(?:ugcPost|share|activity|document).*$/i, '')
+            .split('_')
+            .join(' ')
+            .split('-')
+            .join(' ');
+          title = cleanedTitle.substring(0, 40) + (cleanedTitle.length > 40 ? '...' : '');
+        }
+
+        return {
+          url: tp.url,
+          postId: tp.postId,
+          publishDate: tp.publishDate,
+          engagements: tp.engagements ?? 0,
+          impressions: tp.impressions,
+          pillar: matchedPillar,
+          title: title || `LinkedIn Share #${tp.postId.substring(0, 6)}`,
+          isMatched: !!matchedDraft,
+          matchedDraftId: matchedDraft?.id
+        };
+      });
+
+      setParsedPosts(tempParsed);
+    } catch (err: any) {
+      alert(`Failed to parse file: ${err.message}`);
+      setParsedPosts([]);
+    }
   };
+
+  reader.readAsArrayBuffer(file);
+};
 
   // Submit bulk reconciliation to backend
   const handleConfirmImport = async () => {
@@ -245,20 +270,32 @@ export default function AnalyticsTab({ logsList, onRefetchLogs }: Props) {
         };
       });
 
-    // Prepare performance logs to insert or update
-    const logsToInsert = parsedPosts.map(p => ({
-      sourceDraftId: p.matchedDraftId || undefined,
-      postTitle: p.title,
-      postedAt: p.publishDate,
-      pillar: p.pillar,
-      format: p.url.includes('document') ? ('data' as const) : ('insight' as const),
-      impressions: p.engagements * 12, // estimate impressions based on engagements multiplier if views not provided
-      reactions: p.engagements,
-      comments: 0,
-      reposts: 0,
-      profileViews: 0,
-      notes: `Reconciled via CSV Upload. ID: ${p.postId}`
-    }));
+// Prepare performance logs to insert or update.
+      const logsToInsert = parsedPosts.map(p => {
+      const existingLog = logsList.find(l =>
+        (p.matchedDraftId && l.sourceDraftId === p.matchedDraftId) ||
+        l.linkedinPostId === p.postId
+      );
+      const hasRealImpressions = typeof p.impressions === 'number';
+
+      return {
+        id: existingLog?.id,
+        sourceDraftId: p.matchedDraftId || undefined,
+        linkedinPostId: p.postId,
+        postTitle: p.title,
+        postedAt: p.publishDate,
+        pillar: p.pillar,
+        format: p.url.includes('document') ? ('data' as const) : ('insight' as const),
+        impressions: hasRealImpressions ? p.impressions! : p.engagements * 12,
+        reactions: p.engagements,
+        comments: 0,
+        reposts: 0,
+        profileViews: 0,
+        notes: hasRealImpressions
+          ? `Reconciled via XLSX Upload. ID: ${p.postId}`
+          : `Reconciled via XLSX Upload (impressions estimated — post not in impression-ranked list). ID: ${p.postId}`
+      };
+    });
 
     try {
       const response = await fetch('/api/logs/bulk', {
@@ -427,16 +464,16 @@ export default function AnalyticsTab({ logsList, onRefetchLogs }: Props) {
           <input 
             type="file" 
             ref={fileInputRef} 
-            onChange={handleCSVUpload} 
-            accept=".csv" 
+            onChange={handleXLSXUpload}  
+            accept=".xlsx" 
             style={{ display: 'none' }} 
           />
           <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📂</div>
           <div style={{ fontWeight: '600', marginBottom: '0.25rem' }}>
-            {csvFileName ? `Selected: ${csvFileName}` : 'Select or drag your CSV file here'}
+            {csvFileName ? `Selected: ${csvFileName}` : 'Select your weekly Aggregate Analytics .xlsx export'}
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-            Supports files with columns: "Post URL", "Post Publish Date", "Engagements"
+            Reads the "TOP POSTS" sheet — merges the engagement-ranked and impression-ranked tables automatically
           </div>
         </div>
 
