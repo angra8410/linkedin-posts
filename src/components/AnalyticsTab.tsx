@@ -412,8 +412,12 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     }));
   };
 
-  const hashtagChartData = getHashtagData().slice(0, 10); // top 10 by avg engagement, keeps chart readable
+  const allHashtagData = getHashtagData();
+  const qualifiedHashtagData = allHashtagData.filter(d => d.count >= 2);
+  const excludedSingletonCount = allHashtagData.length - qualifiedHashtagData.length;
+  const hashtagChartData = qualifiedHashtagData.slice(0, 10); // top 10 by avg engagement, 2+ posts only
   const maxHashtagEngagement = Math.max(...hashtagChartData.map(d => d.avgEngagement), 1);
+
 
   const mediaFormatChartData = getMediaFormatData();
   const maxMediaFormatImpressions = Math.max(...mediaFormatChartData.map(d => d.impressions), 1);
@@ -653,10 +657,19 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
               A post counts once per hashtag it carries. Hover a bar to see post count.
             </p>
+            {excludedSingletonCount > 0 && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '0.25rem' }}>
+                {excludedSingletonCount} hashtag{excludedSingletonCount === 1 ? '' : 's'} used on only 1 post excluded — not enough data yet to rank reliably.
+              </p>
+            )}
 
-            {hashtagChartData.length === 0 ? (
+            {allHashtagData.length === 0 ? (
               <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.85rem' }}>
                 No hashtag data yet — re-import your weekly file to backfill hashtags onto existing logs.
+              </div>
+            ) : hashtagChartData.length === 0 ? (
+              <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '0.85rem' }}>
+                Every hashtag so far has only 1 post — check back once you have repeat usage on at least one tag.
               </div>
             ) : (
               <div className="chart-container">
