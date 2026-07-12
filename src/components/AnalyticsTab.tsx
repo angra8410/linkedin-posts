@@ -234,12 +234,16 @@ export default function AnalyticsTab({ logsList, onRefetchLogs }: Props) {
     // Prepare drafts to update status
     const draftsToUpdate = parsedPosts
       .filter(p => p.isMatched && p.matchedDraftId)
-      .map(p => ({
-        id: p.matchedDraftId!,
-        status: 'posted' as const,
-        postedAt: p.publishDate,
-        linkedinPostId: p.postId
-      }));
+      .map(p => {
+        const original = allDrafts.find(d => d.id === p.matchedDraftId);
+        return {
+          ...(original || {}),
+          id: p.matchedDraftId!,
+          status: 'posted' as const,
+          postedAt: p.publishDate,
+          linkedinPostId: p.postId
+        };
+      });
 
     // Prepare performance logs to insert or update
     const logsToInsert = parsedPosts.map(p => ({

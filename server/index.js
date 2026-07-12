@@ -191,7 +191,7 @@ app.get('/api/logs', async (req, res) => {
 app.post('/api/logs', async (req, res) => {
   try {
     const log = req.body;
-    if (!log.id) { log.id = 'log-' + Date.now(); log.createdAt = Date.now(); }
+    if (!log.id) { log.id = 'log-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); log.createdAt = Date.now(); }
     log.updatedAt = Date.now();
     res.json(await saveLog(log));
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -205,7 +205,7 @@ app.post('/api/logs/bulk', async (req, res) => {
     }
     if (Array.isArray(logs)) {
       for (const log of logs) {
-        if (!log.id) { log.id = 'log-' + Date.now(); log.createdAt = Date.now(); }
+        if (!log.id) { log.id = 'log-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8); log.createdAt = Date.now(); }
         log.updatedAt = Date.now();
         await saveLog(log);
       }
