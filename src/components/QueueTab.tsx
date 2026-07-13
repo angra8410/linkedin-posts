@@ -211,9 +211,11 @@ export default function QueueTab({ draftsList, onRefetchDrafts }: Props) {
                     </div>
 
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button className="btn btn-outline" onClick={() => handleEditOpen(draft)} style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}>
-                        Edit
-                      </button>
+                      {!isPosted && (
+                        <button className="btn btn-outline" onClick={() => handleEditOpen(draft)} style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem' }}>
+                          Edit
+                        </button>
+                      )}
                       <button className="btn btn-outline" onClick={() => handleDelete(draft.id)} style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', color: '#ef4444', borderColor: 'rgba(239,68,68,0.1)' }}>
                         Remove
                       </button>
