@@ -976,6 +976,7 @@ export default function DraftTab({ profile, settings }: Props) {
 
     const updatedDraft: PostDraft = {
       ...savedDraft,
+      content: output,        // ← add this line
       status: 'ready',
       scheduledAt: epoch,
       videoUrn: resolvedVideoUrn,
@@ -1086,6 +1087,7 @@ export default function DraftTab({ profile, settings }: Props) {
           postTitle: topic.slice(0, 40) + '...',
           postedAt: Date.now(),
           pillar: pillar,
+          hashtags: hashtags,       // ✅ carry over the (possibly edited) hashtags
           format: slides.length > 0 ? 'data' : 'insight',
           impressions: 0,
           reactions: 0,
@@ -1124,6 +1126,7 @@ export default function DraftTab({ profile, settings }: Props) {
     if (savedDraft) {
       const updatedDraft: PostDraft = {
         ...savedDraft,
+        content: output,          // ✅ same fix
         status: 'posted',
         postedAt: Date.now(),
         linkedinPostId: `manual-urn-${Date.now()}`,
@@ -1142,6 +1145,7 @@ export default function DraftTab({ profile, settings }: Props) {
         postTitle: topic.slice(0, 40) + '...',
         postedAt: Date.now(),
         pillar: pillar,
+        hashtags: hashtags,       // ✅ same fix
         format: slides.length > 0 ? 'data' : 'insight',
         impressions: 0,
         reactions: 0,
