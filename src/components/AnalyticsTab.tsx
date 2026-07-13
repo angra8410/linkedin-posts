@@ -108,6 +108,7 @@ const findHeaderRowIndex = (rows: any[][]): number => {
       return i;
     }
   }
+
   return -1;
 };
 
@@ -423,7 +424,7 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
   const maxMediaFormatImpressions = Math.max(...mediaFormatChartData.map(d => d.impressions), 1);
   const maxMediaFormatEngagement = Math.max(...mediaFormatChartData.map(d => d.avgEngagement), 1);
 
-  // Export reconciled logs for Fabric Lakehouse ingestion: fact table + hashtag bridge table
+// Export reconciled logs for Fabric Lakehouse ingestion: fact table + hashtag bridge table
 const handleExportForFabric = () => {
   if (logsList.length === 0) {
     alert('No performance logs to export yet.');
@@ -432,9 +433,9 @@ const handleExportForFabric = () => {
 
   // Sheet 1: Posts (fact table) — one row per post
   const postsSheet = logsList.map(log => ({
-    post_id: log.id,
-    linkedin_post_id: log.linkedinPostId || '',
-    source_draft_id: log.sourceDraftId || '',
+    post_id: String(log.id ?? ''),
+    linkedin_post_id: String(log.linkedinPostId ?? ''),
+    source_draft_id: String(log.sourceDraftId ?? ''),
     posted_at: log.postedAt ? new Date(log.postedAt).toISOString() : '',
     pillar: log.pillar || 'General',
     media_format: log.mediaFormat || 'Unknown',
@@ -453,13 +454,42 @@ const handleExportForFabric = () => {
   const hashtagBridge: { post_id: string; hashtag: string }[] = [];
   logsList.forEach(log => {
     (log.hashtags || []).forEach(tag => {
-      hashtagBridge.push({ post_id: log.id, hashtag: tag });
+      hashtagBridge.push({ post_id: String(log.id ?? ''), hashtag: tag });
     });
   });
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(postsSheet), 'Posts');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hashtagBridge), 'PostHashtags');
+  const wsPosts = XLSX.utils.json_to_sheet(postsSheet);
+  const wsHashtags = XLSX.utils.json_to_sheet(hashtagBridge);
+
+    // Belt-and-suspenders: explicitly force the ID columns' cell type to text ('s')
+  // and number format to text ('@'), so Excel/pandas can never reinterpret a
+  // numeric-looking ID string as a number and lose precision on 19-digit URNs.
+  const forceTextColumn = (ws: XLSX.WorkSheet, colName: string) => {
+    if (!ws['!ref']) return;
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    const headerRow: string[] = [];
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: 0, c: C })];
+      headerRow.push(cell ? String(cell.v) : '');
+    }
+    const colIdx = headerRow.indexOf(colName);
+    if (colIdx === -1) return;
+    for (let R = range.s.r + 1; R <= range.e.r; R++) {
+      const cellRef = XLSX.utils.encode_cell({ r: R, c: colIdx });
+      const cell = ws[cellRef];
+      if (cell) {
+        cell.t = 's';
+        cell.z = '@';
+      }
+    }
+  };
+
+  ['post_id', 'linkedin_post_id', 'source_draft_id'].forEach(col => forceTextColumn(wsPosts, col));
+  forceTextColumn(wsHashtags, 'post_id');
+
+  XLSX.utils.book_append_sheet(wb, wsPosts, 'Posts');
+  XLSX.utils.book_append_sheet(wb, wsHashtags, 'PostHashtags');
 
   const dateStr = new Date().toISOString().split('T')[0];
   XLSX.writeFile(wb, `linkedin_fabric_export_${dateStr}.xlsx`);
