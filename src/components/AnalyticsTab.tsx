@@ -423,6 +423,48 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
   const maxMediaFormatImpressions = Math.max(...mediaFormatChartData.map(d => d.impressions), 1);
   const maxMediaFormatEngagement = Math.max(...mediaFormatChartData.map(d => d.avgEngagement), 1);
 
+  // Export reconciled logs for Fabric Lakehouse ingestion: fact table + hashtag bridge table
+const handleExportForFabric = () => {
+  if (logsList.length === 0) {
+    alert('No performance logs to export yet.');
+    return;
+  }
+
+  // Sheet 1: Posts (fact table) — one row per post
+  const postsSheet = logsList.map(log => ({
+    post_id: log.id,
+    linkedin_post_id: log.linkedinPostId || '',
+    source_draft_id: log.sourceDraftId || '',
+    posted_at: log.postedAt ? new Date(log.postedAt).toISOString() : '',
+    pillar: log.pillar || 'General',
+    media_format: log.mediaFormat || 'Unknown',
+    content_genre_format: log.format || '',
+    impressions: log.impressions || 0,
+    reactions: log.reactions || 0,
+    comments: log.comments || 0,
+    reposts: log.reposts || 0,
+    profile_views: log.profileViews || 0,
+    engagement_total: (log.reactions || 0) + (log.comments || 0) + (log.reposts || 0),
+    post_title: log.postTitle || '',
+    notes: log.notes || ''
+  }));
+
+  // Sheet 2: PostHashtags (bridge table) — one row per (post_id, hashtag) pair
+  const hashtagBridge: { post_id: string; hashtag: string }[] = [];
+  logsList.forEach(log => {
+    (log.hashtags || []).forEach(tag => {
+      hashtagBridge.push({ post_id: log.id, hashtag: tag });
+    });
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(postsSheet), 'Posts');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hashtagBridge), 'PostHashtags');
+
+  const dateStr = new Date().toISOString().split('T')[0];
+  XLSX.writeFile(wb, `linkedin_fabric_export_${dateStr}.xlsx`);
+};
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
       
@@ -715,7 +757,21 @@ const handleXLSXUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
 
       {/* Published Log List */}
       <div className="card-panel">
-        <h2 style={{ fontSize: '1.4rem', fontWeight: '700', marginBottom: '1.5rem' }}>Published Content Logs</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.4rem', fontWeight: '700', margin: 0 }}>
+            Published Content Logs
+          </h2>
+
+          {logsList.length > 0 && (
+            <button 
+              className="btn btn-outline" 
+              onClick={handleExportForFabric} 
+              style={{ padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
+            >
+              ⬇️ Export for Fabric
+            </button>
+          )}
+        </div>
 
         {logsList.length === 0 ? (
           <div style={{ padding: '3rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontStyle: 'italic' }}>
