@@ -1069,6 +1069,7 @@ export default function DraftTab({ profile, settings }: Props) {
       if (savedDraft) {
         const updatedDraft: PostDraft = {
           ...savedDraft,
+          content: output,
           status: 'posted',
           postedAt: Date.now(),
           linkedinPostId: data.postId,
