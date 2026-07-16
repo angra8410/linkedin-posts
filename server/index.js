@@ -733,8 +733,17 @@ async function waitForVideoAvailable(videoUrn, accessToken, { intervalMs = 5000,
 setInterval(async () => {
   try {
     const now = Date.now();
-    const drafts = await getDrafts();
-    const due = drafts.filter(d => d.status === 'ready' && d.scheduledAt && d.scheduledAt <= now);
+    
+    // Optimize Egress bandwidth: query only drafts that have status 'ready' from Supabase
+    const { data, error } = await supabase
+      .from('drafts')
+      .select('data')
+      .eq('data->>status', 'ready');
+      
+    if (error) throw error;
+    
+    const readyDrafts = (data || []).map(r => r.data);
+    const due = readyDrafts.filter(d => d.scheduledAt && d.scheduledAt <= now);
     if (!due.length) return;
 
     console.log(`[Scheduler] Found ${due.length} post(s) ready to publish.`);

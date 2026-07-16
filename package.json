@@ -10,7 +10,8 @@
     "dev:client": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "db:clean-carousels": "node scripts/clean_supabase_carousels.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.1",
