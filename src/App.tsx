@@ -5,10 +5,15 @@ import DraftTab from './components/DraftTab';
 import QueueTab from './components/QueueTab';
 import AnalyticsTab from './components/AnalyticsTab';
 import SettingsTab from './components/SettingsTab';
-import { User, Zap, Calendar, BarChart3, Settings } from 'lucide-react';
+import { User, Zap, Calendar, BarChart3, Settings, Menu } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'profile' | 'draft' | 'queue' | 'analytics' | 'settings'>('draft');
+  const [activeTab, setActiveTab] = useState<'profile' | 'draft' | 'queue' | 'analytics' | 'settings'>(() => {
+    return (localStorage.getItem('poster_active_tab') as any) || 'draft';
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem('poster_sidebar_collapsed') === 'true';
+  });
   const [profile, setProfile] = useState<UserBrandProfile | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [draftsList, setDraftsList] = useState<PostDraft[]>([]);
@@ -65,6 +70,15 @@ export default function App() {
     fetchLogs();
   }, []);
 
+  // Sync state to local storage
+  useEffect(() => {
+    localStorage.setItem('poster_active_tab', activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    localStorage.setItem('poster_sidebar_collapsed', String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
+
   // Fetch profile when settings are loaded or changed
   useEffect(() => {
     fetchProfiles();
@@ -89,41 +103,62 @@ export default function App() {
   }, []);
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       {/* Sidebar Navigation */}
       <nav className="sidebar">
         <div>
-          <div className="logo-section">
-            <div className="logo-icon">⚡</div>
-            <div className="logo-text">Poster.ai</div>
+          <div className="logo-section" style={{ display: 'flex', flexDirection: sidebarCollapsed ? 'column' : 'row', alignItems: 'center', gap: '1rem', marginBottom: '3rem', width: '100%', justifyContent: 'space-between' }}>
+            <div onClick={() => setActiveTab('draft')} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }} title="Go to Home / Autopilot">
+              <div className="logo-icon">⚡</div>
+              {!sidebarCollapsed && <div className="logo-text">Poster.ai</div>}
+            </div>
+            
+            <button 
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="sidebar-toggle-btn"
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+                padding: '0.25rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginTop: sidebarCollapsed ? '0.5rem' : '0'
+              }}
+              title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            >
+              <Menu size={20} />
+            </button>
           </div>
           
           <ul className="nav-links">
             <li className={`nav-item ${activeTab === 'draft' ? 'active' : ''}`}>
               <button onClick={() => setActiveTab('draft')}>
                 <Zap size={18} />
-                Autopilot
+                <span>Autopilot</span>
               </button>
             </li>
             
             <li className={`nav-item ${activeTab === 'queue' ? 'active' : ''}`}>
               <button onClick={() => setActiveTab('queue')}>
                 <Calendar size={18} />
-                Schedule Queue
+                <span>Schedule Queue</span>
               </button>
             </li>
 
             <li className={`nav-item ${activeTab === 'profile' ? 'active' : ''}`}>
               <button onClick={() => setActiveTab('profile')}>
                 <User size={18} />
-                Brand Profile
+                <span>Brand Profile</span>
               </button>
             </li>
 
             <li className={`nav-item ${activeTab === 'analytics' ? 'active' : ''}`}>
               <button onClick={() => setActiveTab('analytics')}>
                 <BarChart3 size={18} />
-                Analytics
+                <span>Analytics</span>
               </button>
             </li>
           </ul>
@@ -133,7 +168,7 @@ export default function App() {
           <li className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}>
             <button onClick={() => setActiveTab('settings')}>
               <Settings size={18} />
-              Settings
+              <span>Settings</span>
             </button>
           </li>
         </div>
