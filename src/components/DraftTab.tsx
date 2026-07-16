@@ -444,6 +444,29 @@ export default function DraftTab({ profile, settings }: Props) {
   const [videoUploadStatus, setVideoUploadStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
   const [publishSuccess, setPublishSuccess] = useState(false);
 
+  // Bulk Autopilot states
+  const [creatorMode, setCreatorMode] = useState<'single' | 'bulk'>('single');
+  const [bulkPromptsText, setBulkPromptsText] = useState('');
+  const [bulkStartDate, setBulkStartDate] = useState('');
+  const [bulkStartTime, setBulkStartTime] = useState('06:00');
+  const [bulkEndTime, setBulkEndTime] = useState('17:00');
+  const [bulkIntervalHours, setBulkIntervalHours] = useState(1);
+  const [bulkPillarOption, setBulkPillarOption] = useState('random');
+  const [bulkIsRunning, setBulkIsRunning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{
+    current: number;
+    total: number;
+    currentPrompt: string;
+    logs: string[];
+    elapsedSeconds: number;
+  }>({
+    current: 0,
+    total: 0,
+    currentPrompt: '',
+    logs: [],
+    elapsedSeconds: 0
+  });
+
   const model = settings?.defaultModel || 'gemma4:latest';
   // const streamingEnabled = settings?.streamingEnabled ?? true; // reserved for future streaming
 
@@ -453,6 +476,16 @@ export default function DraftTab({ profile, settings }: Props) {
       setPillar(profile.contentPillars[0]);
     }
   }, [profile, pillar]);
+
+  // Set default bulk start date to tomorrow
+  useEffect(() => {
+    const tom = new Date();
+    tom.setDate(tom.getDate() + 1);
+    const yyyy = tom.getFullYear();
+    const mm = String(tom.getMonth() + 1).padStart(2, '0');
+    const dd = String(tom.getDate()).padStart(2, '0');
+    setBulkStartDate(`${yyyy}-${mm}-${dd}`);
+  }, []);
 
   // Proposes one of the peak days/times (e.g. Wednesday morning at 9:00 AM)
   const handleProposePeakTime = () => {
@@ -546,6 +579,194 @@ export default function DraftTab({ profile, settings }: Props) {
       console.error(err);
       setPipelineStage('error');
       setPipelineError(err.message);
+    }
+  };
+
+  const calculateNextSlot = (
+    currentEpoch: number,
+    intervalHours: number,
+    startHourStr: string,
+    endHourStr: string
+  ): number => {
+    const [startH, startM] = startHourStr.split(':').map(Number);
+    const [endH, endM] = endHourStr.split(':').map(Number);
+    
+    let candidate = new Date(currentEpoch + intervalHours * 60 * 60 * 1000);
+    
+    for (let attempts = 0; attempts < 100; attempts++) {
+      const hour = candidate.getHours();
+      const minute = candidate.getMinutes();
+      const timeVal = hour * 60 + minute;
+      const startVal = startH * 60 + startM;
+      const endVal = endH * 60 + endM;
+      
+      if (timeVal >= startVal && timeVal <= endVal) {
+        return candidate.getTime();
+      }
+      
+      if (timeVal > endVal) {
+        candidate.setDate(candidate.getDate() + 1);
+        candidate.setHours(startH);
+        candidate.setMinutes(startM);
+        candidate.setSeconds(0);
+        candidate.setMilliseconds(0);
+      } else if (timeVal < startVal) {
+        candidate.setHours(startH);
+        candidate.setMinutes(startM);
+        candidate.setSeconds(0);
+        candidate.setMilliseconds(0);
+      }
+    }
+    return candidate.getTime();
+  };
+
+  const runBulkAutopilot = async () => {
+    if (!profile) return;
+    
+    const prompts = bulkPromptsText
+      .split('\n')
+      .map(p => p.trim())
+      .filter(p => p.length > 0);
+      
+    if (prompts.length === 0) {
+      alert('Please enter at least one prompt.');
+      return;
+    }
+    
+    setBulkIsRunning(true);
+    const newLogs = [`Starting bulk queue generation for ${prompts.length} posts...`];
+    setBulkProgress({
+      current: 0,
+      total: prompts.length,
+      currentPrompt: prompts[0],
+      logs: newLogs,
+      elapsedSeconds: 0
+    });
+    
+    let secondsElapsed = 0;
+    const intervalTimer = setInterval(() => {
+      secondsElapsed += 1;
+      setBulkProgress(prev => ({ ...prev, elapsedSeconds: secondsElapsed }));
+    }, 1000);
+    
+    const [startH, startM] = bulkStartTime.split(':').map(Number);
+    const [endH, endM] = bulkEndTime.split(':').map(Number);
+    const startVal = startH * 60 + startM;
+    const endVal = endH * 60 + endM;
+    
+    let currentSlot = new Date(`${bulkStartDate}T${bulkStartTime}`).getTime();
+    let firstDate = new Date(currentSlot);
+    const firstTimeVal = firstDate.getHours() * 60 + firstDate.getMinutes();
+    
+    if (firstTimeVal < startVal) {
+      firstDate.setHours(startH);
+      firstDate.setMinutes(startM);
+      firstDate.setSeconds(0);
+      firstDate.setMilliseconds(0);
+      currentSlot = firstDate.getTime();
+    } else if (firstTimeVal > endVal) {
+      firstDate.setDate(firstDate.getDate() + 1);
+      firstDate.setHours(startH);
+      firstDate.setMinutes(startM);
+      firstDate.setSeconds(0);
+      firstDate.setMilliseconds(0);
+      currentSlot = firstDate.getTime();
+    }
+    
+    try {
+      for (let i = 0; i < prompts.length; i++) {
+        const currentPrompt = prompts[i];
+        
+        setBulkProgress(prev => ({
+          ...prev,
+          current: i,
+          currentPrompt: currentPrompt,
+          logs: [...prev.logs, `[${i + 1}/${prompts.length}] Generating post for: "${currentPrompt.substring(0, 40)}..."`]
+        }));
+        
+        let chosenPillar = bulkPillarOption;
+        if (bulkPillarOption === 'random') {
+          const pillars = profile.contentPillars || ['General'];
+          const rIdx = Math.floor(Math.random() * pillars.length);
+          chosenPillar = pillars[rIdx];
+        }
+        
+        const response = await fetch('/api/autopilot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: currentPrompt,
+            pillar: chosenPillar,
+            model,
+            inputMode: 'topic',
+            postType: 'post'
+          })
+        });
+        
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || `Autopilot API error (status ${response.status})`);
+        }
+        
+        const result = await response.json();
+        const draft = result.selectedDraft;
+        
+        const defaultTags = ['#Recruiting', '#HR', '#MicrosoftFabric'];
+        const generatedTags = draft.hashtags || [];
+        const combinedTags = Array.from(new Set([...defaultTags, ...generatedTags]));
+        const hashtagsString = combinedTags.join(' ');
+        
+        let baseContent = draft.content || '';
+        const originalTagsString = (draft.hashtags || []).join(' ');
+        if (originalTagsString && baseContent.endsWith(originalTagsString)) {
+          baseContent = baseContent.substring(0, baseContent.length - originalTagsString.length).trim();
+        }
+        
+        const finalContent = baseContent + '\n\n' + hashtagsString;
+        
+        const updatedDraft = {
+          ...draft,
+          content: finalContent,
+          status: 'ready' as const,
+          scheduledAt: currentSlot,
+          hashtags: combinedTags,
+          updatedAt: Date.now()
+        };
+        
+        const saveRes = await fetch('/api/drafts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedDraft)
+        });
+        
+        if (!saveRes.ok) {
+          throw new Error(`Failed to save scheduled draft (status ${saveRes.status})`);
+        }
+        
+        const timeStr = new Date(currentSlot).toLocaleString();
+        
+        setBulkProgress(prev => ({
+          ...prev,
+          logs: [...prev.logs, `✓ Scheduled: "${currentPrompt.substring(0, 30)}..." for ${timeStr} under pillar "${chosenPillar}"`]
+        }));
+        
+        currentSlot = calculateNextSlot(currentSlot, bulkIntervalHours, bulkStartTime, bulkEndTime);
+      }
+      
+      setBulkProgress(prev => ({
+        ...prev,
+        current: prompts.length,
+        logs: [...prev.logs, `🎉 Successfully generated and scheduled all ${prompts.length} posts!`]
+      }));
+    } catch (err: any) {
+      console.error(err);
+      setBulkProgress(prev => ({
+        ...prev,
+        logs: [...prev.logs, `❌ Error: ${err.message}`]
+      }));
+    } finally {
+      clearInterval(intervalTimer);
+      setBulkIsRunning(false);
     }
   };
 
@@ -1185,94 +1406,236 @@ export default function DraftTab({ profile, settings }: Props) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
           <h2 style={{ fontSize: '1.3rem', fontWeight: '700' }}>Post Generator</h2>
           
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button 
-              className={`btn btn-outline`} 
-              onClick={() => setPostType('post')}
-              style={{ padding: '0.4rem 1rem', fontSize: '0.85rem', background: postType === 'post' ? 'rgba(255,255,255,0.08)' : 'none' }}
-            >
-              📝 Organic Post
-            </button>
-            <button 
-              className={`btn btn-outline`} 
-              onClick={() => setPostType('personal')}
-              style={{ padding: '0.4rem 1rem', fontSize: '0.85rem', background: postType === 'personal' ? 'rgba(255,255,255,0.08)' : 'none' }}
-            >
-              Personal Story
-            </button>
-            <button 
-              className={`btn btn-outline`} 
-              onClick={() => setPostType('recruiter')}
-              style={{ padding: '0.4rem 1rem', fontSize: '0.85rem', background: postType === 'recruiter' ? 'rgba(255,255,255,0.08)' : 'none' }}
-            >
-              🎯 Recruiter Showcase
-            </button>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div className="form-group">
-            <label className="form-label">Input Mode</label>
+          {creatorMode === 'single' && (
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button 
-                type="button" 
-                onClick={() => setInputMode('topic')} 
-                style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', borderRadius: '20px', border: '1px solid var(--border-color)', background: inputMode === 'topic' ? '#0a66c2' : 'transparent', color: '#fff', cursor: 'pointer' }}
+                className={`btn btn-outline`} 
+                onClick={() => setPostType('post')}
+                style={{ padding: '0.4rem 1rem', fontSize: '0.85rem', background: postType === 'post' ? 'rgba(255,255,255,0.08)' : 'none' }}
               >
-                💡 Topic Idea
+                📝 Organic Post
               </button>
               <button 
-                type="button" 
-                onClick={() => setInputMode('source')} 
-                style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', borderRadius: '20px', border: '1px solid var(--border-color)', background: inputMode === 'source' ? '#0a66c2' : 'transparent', color: '#fff', cursor: 'pointer' }}
+                className={`btn btn-outline`} 
+                onClick={() => setPostType('personal')}
+                style={{ padding: '0.4rem 1rem', fontSize: '0.85rem', background: postType === 'personal' ? 'rgba(255,255,255,0.08)' : 'none' }}
               >
-                📄 Adapt Source Material
+                Personal Story
+              </button>
+              <button 
+                className={`btn btn-outline`} 
+                onClick={() => setPostType('recruiter')}
+                style={{ padding: '0.4rem 1rem', fontSize: '0.85rem', background: postType === 'recruiter' ? 'rgba(255,255,255,0.08)' : 'none' }}
+              >
+                🎯 Recruiter Showcase
               </button>
             </div>
-          </div>
+          )}
+        </div>
 
-          <div className="form-group">
-            <label className="form-label">
-              {inputMode === 'topic' ? 'What do you want to post about?' : 'Paste your source text or raw ideas:'}
-            </label>
-            <textarea
-              className="form-textarea"
-              placeholder={inputMode === 'topic' ? 'e.g. Why local Ollama models are a game-changer for data privacy...' : 'Paste draft notes, links, or developer thoughts...'}
-              value={topic}
-              onChange={e => setTopic(e.target.value)}
-              rows={4}
-              disabled={isAutopilotRunning}
-            />
-          </div>
+        {/* Creator Mode Tabs */}
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem', gap: '1rem' }}>
+          <button
+            type="button"
+            onClick={() => setCreatorMode('single')}
+            disabled={bulkIsRunning || isAutopilotRunning}
+            style={{
+              padding: '0.75rem 1rem',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              background: 'none',
+              border: 'none',
+              borderBottom: creatorMode === 'single' ? '2px solid #0a66c2' : '2px solid transparent',
+              color: creatorMode === 'single' ? '#fff' : 'var(--text-secondary)',
+              cursor: (bulkIsRunning || isAutopilotRunning) ? 'not-allowed' : 'pointer',
+              opacity: (bulkIsRunning || isAutopilotRunning) ? 0.6 : 1
+            }}
+          >
+            👤 Single Autopilot Post
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreatorMode('bulk')}
+            disabled={bulkIsRunning || isAutopilotRunning}
+            style={{
+              padding: '0.75rem 1rem',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              background: 'none',
+              border: 'none',
+              borderBottom: creatorMode === 'bulk' ? '2px solid #0a66c2' : '2px solid transparent',
+              color: creatorMode === 'bulk' ? '#fff' : 'var(--text-secondary)',
+              cursor: (bulkIsRunning || isAutopilotRunning) ? 'not-allowed' : 'pointer',
+              opacity: (bulkIsRunning || isAutopilotRunning) ? 0.6 : 1
+            }}
+          >
+            ⚡ Bulk Autopilot Queue
+          </button>
+        </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
-            {postType !== 'personal' && (
+        {creatorMode === 'single' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div className="form-group">
+              <label className="form-label">Input Mode</label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button 
+                  type="button" 
+                  onClick={() => setInputMode('topic')} 
+                  style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', borderRadius: '20px', border: '1px solid var(--border-color)', background: inputMode === 'topic' ? '#0a66c2' : 'transparent', color: '#fff', cursor: 'pointer' }}
+                >
+                  💡 Topic Idea
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => setInputMode('source')} 
+                  style={{ padding: '0.5rem 1rem', fontSize: '0.8rem', borderRadius: '20px', border: '1px solid var(--border-color)', background: inputMode === 'source' ? '#0a66c2' : 'transparent', color: '#fff', cursor: 'pointer' }}
+                >
+                  📄 Adapt Source Material
+                </button>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                {inputMode === 'topic' ? 'What do you want to post about?' : 'Paste your source text or raw ideas:'}
+              </label>
+              <textarea
+                className="form-textarea"
+                placeholder={inputMode === 'topic' ? 'e.g. Why local Ollama models are a game-changer for data privacy...' : 'Paste draft notes, links, or developer thoughts...'}
+                value={topic}
+                onChange={e => setTopic(e.target.value)}
+                rows={4}
+                disabled={isAutopilotRunning}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+              {postType !== 'personal' && (
+                <div className="form-group">
+                  <label className="form-label">Content Pillar</label>
+                  <select className="form-select" value={pillar} onChange={e => setPillar(e.target.value)} disabled={isAutopilotRunning}>
+                    {(profile?.contentPillars || []).map(p => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="form-group">
-                <label className="form-label">Content Pillar</label>
-                <select className="form-select" value={pillar} onChange={e => setPillar(e.target.value)} disabled={isAutopilotRunning}>
+                <label className="form-label">Active LLM Model</label>
+                <input type="text" className="form-input" value={model} disabled style={{ opacity: 0.6 }} />
+              </div>
+            </div>
+
+            <button 
+              type="button" 
+              className="btn btn-accent" 
+              onClick={runAutopilot} 
+              disabled={!profile || !topic.trim() || isAutopilotRunning}
+              style={{ padding: '1.1rem', fontSize: '1rem' }}
+            >
+              {isAutopilotRunning ? '⚡ Running Autopilot Pipeline...' : '⚡ Run Autopilot (Generate, Tag & Save)'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div className="form-group">
+              <label className="form-label">Bulk Topics / Prompts (One per line)</label>
+              <textarea
+                className="form-textarea"
+                placeholder="e.g.&#10;Topic 1: Why clean data is better than high volume data&#10;Topic 2: Designing scalable SQL schemas for enterprise apps&#10;Topic 3: My favorite Power BI tips and tricks"
+                value={bulkPromptsText}
+                onChange={e => setBulkPromptsText(e.target.value)}
+                rows={6}
+                disabled={bulkIsRunning}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+              <div className="form-group">
+                <label className="form-label">Start Date</label>
+                <input 
+                  type="date" 
+                  className="form-input" 
+                  value={bulkStartDate} 
+                  onChange={e => setBulkStartDate(e.target.value)} 
+                  disabled={bulkIsRunning}
+                  required 
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Allowed Active Hours (Start & End Time)</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <input 
+                    type="time" 
+                    className="form-input" 
+                    value={bulkStartTime} 
+                    onChange={e => setBulkStartTime(e.target.value)} 
+                    disabled={bulkIsRunning}
+                    required 
+                  />
+                  <span style={{ display: 'flex', alignItems: 'center' }}>to</span>
+                  <input 
+                    type="time" 
+                    className="form-input" 
+                    value={bulkEndTime} 
+                    onChange={e => setBulkEndTime(e.target.value)} 
+                    disabled={bulkIsRunning}
+                    required 
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+              <div className="form-group">
+                <label className="form-label">Posting Frequency (Hours)</label>
+                <input 
+                  type="number" 
+                  className="form-input" 
+                  value={bulkIntervalHours} 
+                  onChange={e => setBulkIntervalHours(Math.max(1, parseInt(e.target.value) || 1))} 
+                  disabled={bulkIsRunning}
+                  min={1}
+                  required 
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Content Pillar Mapping</label>
+                <select 
+                  className="form-select" 
+                  value={bulkPillarOption} 
+                  onChange={e => setBulkPillarOption(e.target.value)} 
+                  disabled={bulkIsRunning}
+                >
+                  <option value="random">🎲 Randomize per post (Recommended)</option>
                   {(profile?.contentPillars || []).map(p => (
                     <option key={p} value={p}>{p}</option>
                   ))}
                 </select>
               </div>
-            )}
+            </div>
 
-            <div className="form-group">
-              <label className="form-label">Active LLM Model</label>
-              <input type="text" className="form-input" value={model} disabled style={{ opacity: 0.6 }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <button 
+                type="button" 
+                className="btn btn-accent" 
+                onClick={runBulkAutopilot} 
+                disabled={!profile || !bulkPromptsText.trim() || bulkIsRunning}
+                style={{ padding: '1.1rem', fontSize: '1rem' }}
+              >
+                {bulkIsRunning ? '⚡ Running Bulk Autopilot Queue...' : '⚡ Generate & Schedule Bulk Queue'}
+              </button>
+              
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                <span>• Generated posts will automatically include default hashtags: <strong style={{ color: '#0a66c2' }}>#Recruiting #HR #MicrosoftFabric</strong>.</span>
+                <span>• Posts are generated sequentially with a Groq free-tier rate-limit buffer (approx. 60–90 seconds per post).</span>
+              </div>
             </div>
           </div>
-
-          <button 
-            type="button" 
-            className="btn btn-accent" 
-            onClick={runAutopilot} 
-            disabled={!profile || !topic.trim() || isAutopilotRunning}
-            style={{ padding: '1.1rem', fontSize: '1rem' }}
-          >
-            {isAutopilotRunning ? '⚡ Running Autopilot Pipeline...' : '⚡ Run Autopilot (Generate, Tag & Save)'}
-          </button>
-        </div>
+        )}
       </div>
 
       {/* Autopilot Progress Visualizer */}
@@ -1313,6 +1676,63 @@ export default function DraftTab({ profile, settings }: Props) {
               Error: {pipelineError}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Bulk Progress Dashboard */}
+      {bulkProgress.total > 0 && (
+        <div className="card-panel pipeline-panel">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: '700' }}>Bulk Queue Generation Progress</h3>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+              {bulkIsRunning ? '⚡ Running...' : '✓ Done'}
+            </span>
+          </div>
+
+          <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '1rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', marginBottom: '0.5rem' }}>
+              <span>Progress: <strong>{bulkProgress.current} / {bulkProgress.total} posts</strong></span>
+              <span>Elapsed: <strong>{bulkProgress.elapsedSeconds}s</strong></span>
+            </div>
+            
+            <div style={{ background: 'rgba(255,255,255,0.1)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
+              <div style={{
+                background: '#0a66c2',
+                height: '100%',
+                width: `${(bulkProgress.current / bulkProgress.total) * 100}%`,
+                transition: 'width 0.4s ease'
+              }} />
+            </div>
+            
+            {bulkIsRunning && bulkProgress.currentPrompt && (
+              <div style={{ marginTop: '0.75rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                Processing: <em style={{ color: '#fff' }}>"{bulkProgress.currentPrompt}"</em>
+              </div>
+            )}
+          </div>
+
+          <h4 style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.5rem', color: 'var(--text-muted)' }}>Activity Logs:</h4>
+          <div style={{
+            background: 'rgba(0,0,0,0.2)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '8px',
+            padding: '0.75rem 1rem',
+            fontFamily: 'monospace',
+            fontSize: '0.8rem',
+            maxHeight: '200px',
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.35rem'
+          }}>
+            {bulkProgress.logs.map((log, index) => (
+              <div key={index} style={{
+                color: log.startsWith('✓') ? '#10b981' : log.startsWith('❌') ? '#ef4444' : log.startsWith('🎉') ? '#a855f7' : 'var(--text-secondary)'
+              }}>
+                {log}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
