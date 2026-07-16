@@ -14,13 +14,28 @@ export default function QueueTab({ draftsList, onRefetchDrafts }: Props) {
   const [newContent, setNewContent] = useState('');
 
   useEffect(() => {
-    // Filter and sort drafts that have scheduledAt or posted status
+    // Filter and sort drafts: active scheduled on top (ascending), published on bottom (descending)
     const filtered = draftsList
       .filter(d => d.status === 'ready' || d.status === 'ready-manual' || d.status === 'posted' || d.status === 'error')
       .sort((a, b) => {
-        const timeA = a.scheduledAt || a.postedAt || 0;
-        const timeB = b.scheduledAt || b.postedAt || 0;
-        return timeA - timeB;
+        const isPostedA = a.status === 'posted';
+        const isPostedB = b.status === 'posted';
+
+        // 1. Unposted (active) posts go first, posted go last
+        if (isPostedA && !isPostedB) return 1;
+        if (!isPostedA && isPostedB) return -1;
+
+        // 2. Both are active: sort chronologically by scheduledAt ascending (soonest first)
+        if (!isPostedA && !isPostedB) {
+          const timeA = a.scheduledAt || 0;
+          const timeB = b.scheduledAt || 0;
+          return timeA - timeB;
+        }
+
+        // 3. Both are posted: sort by postedAt descending (most recently published first)
+        const timeA = a.postedAt || 0;
+        const timeB = b.postedAt || 0;
+        return timeB - timeA;
       });
     setScheduledDrafts(filtered);
   }, [draftsList]);
