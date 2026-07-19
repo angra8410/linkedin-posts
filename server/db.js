@@ -9,13 +9,13 @@ const __dirname = path.dirname(__filename);
 
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 
-const isRailwayProxy = connectionString && connectionString.includes('rlwy.net');
-const isProduction = process.env.NODE_ENV === 'production' || isRailwayProxy;
+const isExternalProxy = connectionString && (connectionString.includes('rlwy.net') || connectionString.includes('sslmode=require'));
+const sslConfig = isExternalProxy ? { rejectUnauthorized: false } : false;
 
 const poolConfig = connectionString
   ? {
       connectionString,
-      ssl: isProduction ? { rejectUnauthorized: false } : false,
+      ssl: sslConfig,
     }
   : {
       host: process.env.PGHOST || 'localhost',
@@ -23,7 +23,7 @@ const poolConfig = connectionString
       user: process.env.PGUSER || 'postgres',
       password: process.env.PGPASSWORD || 'postgres',
       database: process.env.PGDATABASE || 'railway',
-      ssl: isProduction ? { rejectUnauthorized: false } : false,
+      ssl: false,
     };
 
 export const pool = new Pool(poolConfig);

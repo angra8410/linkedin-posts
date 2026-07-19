@@ -764,8 +764,9 @@ if (existsSync(distPath)) {
   console.warn(`[Server] Advertencia: No se encontró la carpeta 'dist' en ${distPath}.`);
 }
 
-initDB().then(() => {
-  app.listen(PORT, () => console.log(`[Server] Poster.ai cloud running on port ${PORT}`));
-}).catch(err => {
-  console.error('[PostgreSQL] Failed to initialize database:', err);
+app.listen(PORT, () => {
+  console.log(`[Server] Poster.ai cloud running on port ${PORT}`);
+  initDB()
+    .then(() => console.log('[PostgreSQL] Database connection and schema initialization ready!'))
+    .catch(err => console.error('[PostgreSQL] Database initialization error:', err.message));
 });
