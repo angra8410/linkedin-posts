@@ -276,7 +276,13 @@ const dbShim = {
   }
 };
 
-(async () => { dbShim._settings = await getSettings(); })();
+(async () => {
+  try {
+    dbShim._settings = await getSettings();
+  } catch (err) {
+    console.warn('[Server] Notice: Database pre-fetch pending DATABASE_URL connection:', err.message);
+  }
+})();
 
 const saveDbShim = async () => {
   await saveSettings(dbShim._settings);
