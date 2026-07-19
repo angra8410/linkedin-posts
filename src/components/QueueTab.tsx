@@ -42,7 +42,7 @@ export default function QueueTab({ draftsList, onRefetchDrafts }: Props) {
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to remove this post from the queue?')) return;
-    
+
     try {
       const response = await fetch(`/api/drafts/${id}`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Failed to delete draft');
@@ -63,7 +63,7 @@ export default function QueueTab({ draftsList, onRefetchDrafts }: Props) {
       const dd = String(dateObj.getDate()).padStart(2, '0');
       const hh = String(dateObj.getHours()).padStart(2, '0');
       const min = String(dateObj.getMinutes()).padStart(2, '0');
-      
+
       setNewDate(`${yyyy}-${mm}-${dd}`);
       setNewTime(`${hh}:${min}`);
     } else {
@@ -106,12 +106,12 @@ export default function QueueTab({ draftsList, onRefetchDrafts }: Props) {
 
   const formatTimestamp = (ts?: number) => {
     if (!ts) return 'N/A';
-    return new Date(ts).toLocaleString(undefined, { 
-      weekday: 'short', 
-      month: 'short', 
-      day: 'numeric', 
-      hour: '2-digit', 
-      minute: '2-digit' 
+    return new Date(ts).toLocaleString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     });
   };
 
@@ -122,14 +122,14 @@ export default function QueueTab({ draftsList, onRefetchDrafts }: Props) {
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
           <div className="card-panel" style={{ width: '100%', maxWidth: '700px', background: 'var(--bg-color)', border: '1px solid rgba(99, 102, 241, 0.4)' }}>
             <h3 style={{ fontSize: '1.2rem', fontWeight: '700', marginBottom: '1.5rem' }}>Edit Queued Post</h3>
-            
+
             <form onSubmit={handleEditSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               <div className="form-group">
                 <label className="form-label">Post Commentary</label>
-                <textarea 
-                  className="form-textarea" 
-                  value={newContent} 
-                  onChange={e => setNewContent(e.target.value)} 
+                <textarea
+                  className="form-textarea"
+                  value={newContent}
+                  onChange={e => setNewContent(e.target.value)}
                   rows={8}
                   required
                 />
@@ -139,21 +139,21 @@ export default function QueueTab({ draftsList, onRefetchDrafts }: Props) {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                   <div className="form-group">
                     <label className="form-label">Date</label>
-                    <input 
-                      type="date" 
-                      className="form-input" 
-                      value={newDate} 
-                      onChange={e => setNewDate(e.target.value)} 
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={newDate}
+                      onChange={e => setNewDate(e.target.value)}
                       required
                     />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Time</label>
-                    <input 
-                      type="time" 
-                      className="form-input" 
-                      value={newTime} 
-                      onChange={e => setNewTime(e.target.value)} 
+                    <input
+                      type="time"
+                      className="form-input"
+                      value={newTime}
+                      onChange={e => setNewTime(e.target.value)}
                       required
                     />
                   </div>
@@ -185,35 +185,35 @@ export default function QueueTab({ draftsList, onRefetchDrafts }: Props) {
               const isManual = draft.status === 'ready-manual';
 
               return (
-                <div 
-                  key={draft.id} 
-                  style={{ 
-                    border: '1px solid var(--border-color)', 
-                    borderRadius: '12px', 
-                    background: 'rgba(255,255,255,0.01)', 
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    overflow: 'hidden' 
+                <div
+                  key={draft.id}
+                  style={{
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '12px',
+                    background: 'rgba(255,255,255,0.01)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden'
                   }}
                 >
-                  <div style={{ 
-                    background: 'rgba(10, 15, 30, 0.4)', 
-                    padding: '0.85rem 1.25rem', 
-                    borderBottom: '1px solid var(--border-color)', 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
+                  <div style={{
+                    background: 'rgba(10, 15, 30, 0.4)',
+                    padding: '0.85rem 1.25rem',
+                    borderBottom: '1px solid var(--border-color)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
                     alignItems: 'center',
                     flexWrap: 'wrap',
                     gap: '0.5rem'
                   }}>
                     <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                       <span className="event-post-time" style={{ color: isPosted ? '#10b981' : isError ? '#ef4444' : '#3b82f6' }}>
-                        {isPosted 
-                          ? `Posted: ${formatTimestamp(draft.postedAt)}` 
+                        {isPosted
+                          ? `Posted: ${formatTimestamp(draft.postedAt)}`
                           : `Scheduled: ${formatTimestamp(draft.scheduledAt)}`
                         }
                       </span>
-                      
+
                       {isPosted ? (
                         <span className="chip chip-success">✓ Published</span>
                       ) : isError ? (
@@ -241,7 +241,7 @@ export default function QueueTab({ draftsList, onRefetchDrafts }: Props) {
                     <p style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem', color: 'var(--text-secondary)', lineHeight: '1.6', maxHeight: '180px', overflowY: 'auto' }}>
                       {draft.content}
                     </p>
-                    
+
                     {draft.carouselSlides && draft.carouselSlides.length > 0 && (
                       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '1rem', background: 'rgba(255,255,255,0.02)', padding: '0.5rem 0.85rem', borderRadius: '8px', width: 'fit-content' }}>
                         <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>🎨 Linked PDF Slide Carousel:</span>

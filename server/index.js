@@ -3,90 +3,28 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createClient } from '@supabase/supabase-js';
-import { setupLinkedInRoutes } from './linkedin.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-function stripEmojis(text) {
-  if (!text) return '';
-  return text.replace(/[\u2600-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|\uD83E[\uDC00-\uDFFF]/g, '').trim();
-}
-
-// Función auxiliar indispensable para pausar la ejecución y mitigar Rate Limits (TPM) de Groq
-const delay = (ms) => new Promise(res => setTimeout(res, ms));
+import {
+  initDB,
+  getSettings,
+  saveSettings,
+  getProfiles,
+  saveProfile,
+  getDrafts,
+  getReadyDrafts,
+  saveDraft,
+  deleteDraft,
+  getLogs,
+  saveLog
+} from './db.js';
 
 // ── ENV VALIDATION ──────────────────────────────────────────────────────────
-const REQUIRED_ENV = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'GROQ_API_KEY'];
+const REQUIRED_ENV = ['GROQ_API_KEY'];
 REQUIRED_ENV.forEach(key => {
   if (!process.env[key]) {
     console.error(`[Server] Missing required env var: ${key}`);
     process.exit(1);
   }
 });
-
-// ── SUPABASE CLIENT ─────────────────────────────────────────────────────────
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
-
-// ── DB HELPERS ──────────────────────────────────────────────────────────────
-async function getSettings() {
-  const { data } = await supabase.from('settings').select('data').eq('id', 'app').single();
-  const base = data?.data || {};
-  return {
-    ...base,
-    linkedinClientId: process.env.LINKEDIN_CLIENT_ID || base.linkedinClientId,
-    linkedinClientSecret: process.env.LINKEDIN_CLIENT_SECRET || base.linkedinClientSecret,
-    linkedinAccessToken: base.linkedinAccessToken,
-    linkedinMemberUrn: base.linkedinMemberUrn,
-    linkedinTokenExpiresAt: base.linkedinTokenExpiresAt,
-    ollamaUrl: base.ollamaUrl || 'http://localhost:11434',
-    defaultModel: base.defaultModel || 'llama-3.3-70b-versatile',
-    activeProfileId: base.activeProfileId || null,
-    theme: base.theme || 'dark'
-  };
-}
-
-async function saveSettings(data) {
-  await supabase.from('settings').upsert({ id: 'app', data, updated_at: new Date().toISOString() });
-}
-
-async function getProfiles() {
-  const { data } = await supabase.from('profiles').select('data').order('updated_at', { ascending: false });
-  return (data || []).map(r => r.data);
-}
-
-async function saveProfile(profile) {
-  await supabase.from('profiles').upsert({ id: profile.id, data: profile, updated_at: new Date().toISOString() });
-  return profile;
-}
-
-async function getDrafts() {
-  const { data } = await supabase.from('drafts').select('data').order('updated_at', { ascending: false });
-  return (data || []).map(r => r.data);
-}
-
-async function saveDraft(draft) {
-  await supabase.from('drafts').upsert({ id: draft.id, data: draft, updated_at: new Date().toISOString() });
-  return draft;
-}
-
-async function deleteDraft(id) {
-  await supabase.from('drafts').delete().eq('id', id);
-}
-
-async function getLogs() {
-  const { data } = await supabase.from('logs').select('data').order('updated_at', { ascending: false });
-  return (data || []).map(r => r.data);
-}
-
-async function saveLog(log) {
-  await supabase.from('logs').upsert({ id: log.id, data: log, updated_at: new Date().toISOString() });
-  return log;
-}
 
 // ── GROQ LLM HELPER ─────────────────────────────────────────────────────────
 async function callGroq({ model, prompt, system }) {
@@ -734,15 +672,7 @@ setInterval(async () => {
   try {
     const now = Date.now();
     
-    // Optimize Egress bandwidth: query only drafts that have status 'ready' from Supabase
-    const { data, error } = await supabase
-      .from('drafts')
-      .select('data')
-      .eq('data->>status', 'ready');
-      
-    if (error) throw error;
-    
-    const readyDrafts = (data || []).map(r => r.data);
+    const readyDrafts = await getReadyDrafts();
     const due = readyDrafts.filter(d => d.scheduledAt && d.scheduledAt <= now);
     if (!due.length) return;
 
@@ -834,4 +764,8 @@ if (existsSync(distPath)) {
   console.warn(`[Server] Advertencia: No se encontró la carpeta 'dist' en ${distPath}.`);
 }
 
-app.listen(PORT, () => console.log(`[Server] Poster.ai cloud running on port ${PORT}`));
+initDB().then(() => {
+  app.listen(PORT, () => console.log(`[Server] Poster.ai cloud running on port ${PORT}`));
+}).catch(err => {
+  console.error('[PostgreSQL] Failed to initialize database:', err);
+});

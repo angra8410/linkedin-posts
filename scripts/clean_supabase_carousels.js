@@ -1,47 +1,16 @@
-import { createClient } from '@supabase/supabase-js';
-import fs from 'fs';
-import readline from 'readline';
-
-// 1. Read environmental variables from workspace root .env file
-const envPath = './.env';
-if (!fs.existsSync(envPath)) {
-  console.error('Error: .env file not found in the workspace root.');
-  process.exit(1);
-}
-
-const envContent = fs.readFileSync(envPath, 'utf8');
-const getEnvVar = (key) => {
-  const match = envContent.match(new RegExp(`${key}\\s*=\\s*["']?([^"'\r\n]+)["']?`));
-  return match ? match[1] : null;
-};
-
-const supabaseUrl = getEnvVar('SUPABASE_URL');
-const supabaseKey = getEnvVar('SUPABASE_SERVICE_KEY');
-
-if (!supabaseUrl || !supabaseKey) {
-  console.error('Error: Missing SUPABASE_URL or SUPABASE_SERVICE_KEY in .env file.');
-  process.exit(1);
-}
-
-// 2. Initialize Supabase
-const supabase = createClient(supabaseUrl, supabaseKey);
+import { pool } from '../server/db.js';
 
 async function runCleanup() {
   const isExecute = process.argv.includes('--execute');
   
   console.log('----------------------------------------------------');
-  console.log('  SUPABASE DRAFTS CAROUSEL CLEANUP & SLIMSCRIPT  ');
+  console.log('  POSTGRES DRAFTS CAROUSEL CLEANUP & SLIMSCRIPT     ');
   console.log('----------------------------------------------------');
-  console.log(`Connecting to: ${supabaseUrl}`);
   console.log(`Mode: ${isExecute ? 'EXECUTE (Updating Database)' : 'DRY RUN (Read Only)'}`);
   console.log('Fetching drafts...');
 
   try {
-    const { data: drafts, error } = await supabase
-      .from('drafts')
-      .select('id, data, updated_at');
-
-    if (error) throw error;
+    const { rows: drafts } = await pool.query('SELECT id, data, updated_at FROM drafts');
 
     if (!drafts || drafts.length === 0) {
       console.log('No drafts found in database.');
@@ -98,16 +67,15 @@ async function runCleanup() {
       console.log('\nApplying updates sequentially...');
       let successCount = 0;
 
-      for (const draft of draftsToUpdate) {
-        console.log(`- Cleaning draft ID: ${draft.id}...`);
-        const { error: upsertError } = await supabase
-          .from('drafts')
-          .upsert(draft);
-
-        if (upsertError) {
-          console.error(`  ❌ Failed for ${draft.id}:`, upsertError.message);
-        } else {
+        try {
+          await pool.query(
+            `INSERT INTO drafts (id, data, updated_at) VALUES ($1, $2, NOW())
+             ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+            [draft.id, JSON.stringify(draft.data)]
+          );
           successCount += 1;
+        } catch (upsertError) {
+          console.error(`  ❌ Failed for ${draft.id}:`, upsertError.message);
         }
       }
 
@@ -133,6 +101,7 @@ async function runCleanup() {
         process.exit(0);
       }
       await proceedWithUpdate();
+      process.exit(0);
     });
 
   } catch (err) {
