@@ -3,6 +3,7 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { setupLinkedInRoutes } from './linkedin.js';
 import {
   initDB,
   getSettings,
