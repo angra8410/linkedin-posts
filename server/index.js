@@ -70,7 +70,14 @@ app.use(bodyParser.json({ limit: '10mb' }));
 // ── SETTINGS ─────────────────────────────────────────────────────────────────
 app.get('/api/settings', async (req, res) => {
   try { res.json(await getSettings()); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  catch (err) {
+    console.error('[API GET /api/settings Error]:', err.message);
+    res.json({
+      theme: 'dark',
+      defaultModel: 'llama-3.3-70b-versatile',
+      ollamaUrl: 'http://localhost:11434'
+    });
+  }
 });
 
 app.post('/api/settings', async (req, res) => {
@@ -79,13 +86,21 @@ app.post('/api/settings', async (req, res) => {
     const updated = { ...current, ...req.body };
     await saveSettings(updated);
     res.json(updated);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error('[API POST /api/settings Error]:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── PROFILES ──────────────────────────────────────────────────────────────────
 app.get('/api/profiles', async (req, res) => {
-  try { res.json(await getProfiles()); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    const list = await getProfiles();
+    res.json(Array.isArray(list) ? list : []);
+  } catch (err) {
+    console.error('[API GET /api/profiles Error]:', err.message);
+    res.json([]);
+  }
 });
 
 app.post('/api/profiles', async (req, res) => {
@@ -98,13 +113,21 @@ app.post('/api/profiles', async (req, res) => {
       await saveSettings({ ...settings, activeProfileId: profile.id });
     }
     res.json(await saveProfile(profile));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error('[API POST /api/profiles Error]:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── DRAFTS ────────────────────────────────────────────────────────────────────
 app.get('/api/drafts', async (req, res) => {
-  try { res.json(await getDrafts()); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    const list = await getDrafts();
+    res.json(Array.isArray(list) ? list : []);
+  } catch (err) {
+    console.error('[API GET /api/drafts Error]:', err.message);
+    res.json([]);
+  }
 });
 
 app.post('/api/drafts', async (req, res) => {

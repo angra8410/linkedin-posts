@@ -9,13 +9,10 @@ const __dirname = path.dirname(__filename);
 
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 
-const isExternalProxy = connectionString && (connectionString.includes('rlwy.net') || connectionString.includes('sslmode=require'));
-const sslConfig = isExternalProxy ? { rejectUnauthorized: false } : false;
-
 const poolConfig = connectionString
   ? {
       connectionString,
-      ssl: sslConfig,
+      ssl: false,
     }
   : {
       host: process.env.PGHOST || 'localhost',
