@@ -65,15 +65,16 @@ export default function BrandProfileTab({ profile, onProfileUpdate }: Props) {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to save profile');
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server returned ${response.status}`);
       }
 
       setSuccess(true);
       onProfileUpdate();
       setTimeout(() => setSuccess(false), 3000);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Error saving profile');
+      alert('Error saving profile: ' + err.message);
     } finally {
       setLoading(false);
     }

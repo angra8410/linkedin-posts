@@ -114,7 +114,7 @@ app.post('/api/profiles', async (req, res) => {
     }
     res.json(await saveProfile(profile));
   } catch (err) {
-    console.error('[API POST /api/profiles Error]:', err.message);
+    console.error('[API POST /api/profiles Error]:', err.message, err.stack);
     res.status(500).json({ error: err.message });
   }
 });
