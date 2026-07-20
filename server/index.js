@@ -814,9 +814,20 @@ if (existsSync(distPath)) {
   console.warn(`[Server] Advertencia: No se encontró la carpeta 'dist' en ${distPath}.`);
 }
 
-app.listen(PORT, () => {
-  console.log(`[Server] Poster.ai cloud running on port ${PORT}`);
-  initDB()
-    .then(() => console.log('[PostgreSQL] Database connection and schema initialization ready!'))
-    .catch(err => console.error('[PostgreSQL] Database initialization error:', err.message));
-});
+// ── STARTUP ───────────────────────────────────────────────────────────────────
+// Run initDB FIRST, then start listening — prevents race condition where
+// GET /api/profiles is called before seeding completes, returning empty arrays.
+initDB()
+  .then(() => {
+    console.log('[PostgreSQL] Database ready — starting HTTP server...');
+    app.listen(PORT, () => {
+      console.log(`[Server] Poster.ai cloud running on port ${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('[PostgreSQL] Database initialization failed:', err.message);
+    // Start server anyway so Railway health checks pass, but DB may be unavailable
+    app.listen(PORT, () => {
+      console.log(`[Server] Poster.ai cloud running on port ${PORT} (DB unavailable)`);
+    });
+  });
