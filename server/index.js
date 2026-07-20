@@ -105,24 +105,43 @@ app.get('/api/debug', async (req, res) => {
 });
 
 // ── SETTINGS ─────────────────────────────────────────────────────────────────
+const envSettings = () => ({
+  theme: 'dark',
+  defaultModel: process.env.GROQ_DEFAULT_MODEL || 'llama-3.3-70b-versatile',
+  ollamaUrl: 'http://localhost:11434',
+  linkedinClientId: process.env.LINKEDIN_CLIENT_ID || '',
+  linkedinClientSecret: process.env.LINKEDIN_CLIENT_SECRET || '',
+});
+
 app.get('/api/settings', async (req, res) => {
-  try { res.json(await getSettings()); }
-  catch (err) {
-    console.error('[API GET /api/settings Error]:', err.message);
+  try {
+    const s = await getSettings();
+    // Always overlay env vars on top in case DB has stale/empty values
     res.json({
-      theme: 'dark',
-      defaultModel: 'llama-3.3-70b-versatile',
-      ollamaUrl: 'http://localhost:11434'
+      ...s,
+      linkedinClientId: process.env.LINKEDIN_CLIENT_ID || s.linkedinClientId || '',
+      linkedinClientSecret: process.env.LINKEDIN_CLIENT_SECRET || s.linkedinClientSecret || '',
     });
+  } catch (err) {
+    console.error('[API GET /api/settings Error]:', err.message);
+    // DB failed — return env vars so LinkedIn credentials still show
+    res.json(envSettings());
   }
 });
 
 app.post('/api/settings', async (req, res) => {
   try {
-    const current = await getSettings();
+    let current = {};
+    try { current = await getSettings(); } catch { current = envSettings(); }
     const updated = { ...current, ...req.body };
-    await saveSettings(updated);
-    res.json(updated);
+    try { await saveSettings(updated); } catch (dbErr) {
+      console.warn('[POST /api/settings] DB save failed, returning in-memory:', dbErr.message);
+    }
+    res.json({
+      ...updated,
+      linkedinClientId: process.env.LINKEDIN_CLIENT_ID || updated.linkedinClientId || '',
+      linkedinClientSecret: process.env.LINKEDIN_CLIENT_SECRET || updated.linkedinClientSecret || '',
+    });
   } catch (err) {
     console.error('[API POST /api/settings Error]:', err.message);
     res.status(500).json({ error: err.message });
