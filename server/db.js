@@ -102,11 +102,23 @@ export async function initDB() {
             );
           }
 
-          // Seed Settings
+          // Seed Settings — merge db.json as base, but preserve live OAuth tokens from DB if they exist
           if (json.settings) {
+            const { rows: existingSettings } = await client.query(`SELECT data FROM settings WHERE id = 'app'`);
+            const existing = existingSettings[0]?.data || {};
+            const merged = {
+              ...json.settings,
+              // Preserve live OAuth tokens from DB (they may be newer than db.json)
+              ...(existing.linkedinAccessToken ? {
+                linkedinAccessToken: existing.linkedinAccessToken,
+                linkedinMemberUrn: existing.linkedinMemberUrn,
+                linkedinTokenExpiresAt: existing.linkedinTokenExpiresAt,
+              } : {})
+            };
             await client.query(
-              `INSERT INTO settings (id, data, updated_at) VALUES ('app', $1, NOW()) ON CONFLICT (id) DO NOTHING`,
-              [JSON.stringify(json.settings)]
+              `INSERT INTO settings (id, data, updated_at) VALUES ('app', $1, NOW())
+               ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+              [JSON.stringify(merged)]
             );
           }
 
