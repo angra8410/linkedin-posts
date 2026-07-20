@@ -30,12 +30,12 @@ export default function App() {
     }
   };
 
-  const fetchProfiles = async () => {
+  const fetchProfiles = async (currentSettings?: typeof settings) => {
     try {
       const response = await fetch('/api/profiles');
       const data = await response.json();
-      // Select the active profile from settings
-      const activeId = settings?.activeProfileId;
+      // Select the active profile — use passed settings or fall back to state
+      const activeId = (currentSettings ?? settings)?.activeProfileId;
       const active = data.find((p: any) => p.id === activeId) || data[0] || null;
       setProfile(active);
     } catch (err) {
@@ -66,6 +66,7 @@ export default function App() {
   // Run initial fetches
   useEffect(() => {
     fetchSettings();
+    fetchProfiles(); // fetch profiles on mount using data[0] fallback
     fetchDrafts();
     fetchLogs();
   }, []);
@@ -79,9 +80,9 @@ export default function App() {
     localStorage.setItem('poster_sidebar_collapsed', String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
-  // Fetch profile when settings are loaded or changed
+  // Re-fetch profile when settings load (to apply activeProfileId selection)
   useEffect(() => {
-    fetchProfiles();
+    if (settings) fetchProfiles(settings);
   }, [settings]);
 
   // Handle OAuth callback parameters in address bar
