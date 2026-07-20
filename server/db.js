@@ -71,13 +71,13 @@ export async function initDB() {
     }
 
     if (dbJson) {
-      // ── Profiles: seed only if empty ──────────────────────────────────────
-      const { rows: profileRows } = await client.query('SELECT COUNT(*) FROM profiles');
-      if (parseInt(profileRows[0].count, 10) === 0 && Array.isArray(dbJson.profiles)) {
-        console.log('[PostgreSQL] Seeding profiles...');
+      // ── Profiles: always sync from db.json (DO UPDATE) ───────────────────────
+      if (Array.isArray(dbJson.profiles)) {
+        console.log('[PostgreSQL] Syncing profiles from db.json...');
         for (const p of dbJson.profiles) {
           await client.query(
-            `INSERT INTO profiles (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
+            `INSERT INTO profiles (id, data, updated_at) VALUES ($1, $2, NOW())
+             ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
             [p.id, JSON.stringify(p)]
           );
         }

@@ -127,10 +127,6 @@ app.post('/api/profiles', async (req, res) => {
     const profile = req.body;
     if (!profile.id) { profile.id = 'profile-' + Date.now(); profile.createdAt = Date.now(); }
     profile.updatedAt = Date.now();
-    const settings = await getSettings();
-    if (!settings.activeProfileId) {
-      await saveSettings({ ...settings, activeProfileId: profile.id });
-    }
     res.json(await saveProfile(profile));
   } catch (err) {
     console.error('[API POST /api/profiles Error]:', err.message, err.stack);
