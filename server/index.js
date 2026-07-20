@@ -146,8 +146,13 @@ app.delete('/api/drafts/:id', async (req, res) => {
 
 // ── LOGS ──────────────────────────────────────────────────────────────────────
 app.get('/api/logs', async (req, res) => {
-  try { res.json(await getLogs()); }
-  catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    const list = await getLogs();
+    res.json(Array.isArray(list) ? list : []);
+  } catch (err) {
+    console.error('[API GET /api/logs Error]:', err.message);
+    res.json([]);
+  }
 });
 
 app.post('/api/logs', async (req, res) => {

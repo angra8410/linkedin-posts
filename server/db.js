@@ -93,13 +93,13 @@ export async function initDB() {
           }
 
           // Seed Logs
-          if (Array.isArray(json.logs)) {
-            for (const l of json.logs) {
-              await client.query(
-                `INSERT INTO logs (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
-                [l.id, JSON.stringify(l)]
-              );
-            }
+          // Seed Logs (key is performanceLogs in db.json)
+          const logsKey = Array.isArray(json.performanceLogs) ? json.performanceLogs : (Array.isArray(json.logs) ? json.logs : []);
+          for (const l of logsKey) {
+            await client.query(
+              `INSERT INTO logs (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
+              [l.id, JSON.stringify(l)]
+            );
           }
 
           // Seed Settings
@@ -113,6 +113,30 @@ export async function initDB() {
           console.log('[PostgreSQL] Seeding completed successfully!');
         } catch (seedErr) {
           console.error('[PostgreSQL] Error during db.json seeding:', seedErr);
+        }
+      }
+
+      // ── Seed logs table independently (may already exist from a prior run) ──
+      const { rows: logRows } = await client.query('SELECT COUNT(*) FROM logs');
+      const logCount = parseInt(logRows[0].count, 10);
+      if (logCount === 0) {
+        const dbJsonPath2 = path.join(__dirname, 'db.json');
+        if (fs.existsSync(dbJsonPath2)) {
+          try {
+            const raw2 = fs.readFileSync(dbJsonPath2, 'utf8');
+            const json2 = JSON.parse(raw2);
+            const logsKey2 = Array.isArray(json2.performanceLogs) ? json2.performanceLogs : (Array.isArray(json2.logs) ? json2.logs : []);
+            console.log(`[PostgreSQL] Seeding ${logsKey2.length} performance logs from db.json...`);
+            for (const l of logsKey2) {
+              await client.query(
+                `INSERT INTO logs (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
+                [l.id, JSON.stringify(l)]
+              );
+            }
+            console.log('[PostgreSQL] Log seeding completed.');
+          } catch (seedErr) {
+            console.error('[PostgreSQL] Error seeding logs:', seedErr);
+          }
         }
       }
     }

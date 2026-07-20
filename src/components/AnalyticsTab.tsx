@@ -45,7 +45,7 @@ export default function AnalyticsTab({ logsList, onRefetchLogs }: Props) {
   useEffect(() => {
     fetch('/api/drafts')
       .then(res => res.json())
-      .then(data => setAllDrafts(data))
+      .then(data => setAllDrafts(Array.isArray(data) ? data : []))
       .catch(err => console.error(err));
   }, [logsList]);
 
