@@ -80,9 +80,27 @@ app.get('/api/debug', async (req, res) => {
   } catch (e) { results.profilesError = e.message; }
   try {
     const { pool } = await import('./db.js');
-    const { rows } = await pool.query('SELECT NOW() as time');
+    const { rows } = await pool.query('SELECT NOW() as time, current_database() as db');
     results.dbTime = rows[0]?.time;
+    results.dbName = rows[0]?.db;
+    // Check row counts directly
+    const { rows: pr } = await pool.query('SELECT COUNT(*) as c FROM profiles');
+    const { rows: sr } = await pool.query('SELECT COUNT(*) as c FROM settings');
+    results.profileRowsInDB = parseInt(pr[0]?.c, 10);
+    results.settingsRowsInDB = parseInt(sr[0]?.c, 10);
   } catch (e) { results.dbError = e.message; }
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+    const __fn = fileURLToPath(import.meta.url);
+    const __dn = path.default.dirname(__fn);
+    const dbJsonPath = path.default.join(__dn, '../server/db.json');
+    const dbJsonPath2 = path.default.join(__dn, 'db.json');
+    results.dbJsonPath1Exists = fs.default.existsSync(dbJsonPath);
+    results.dbJsonPath2Exists = fs.default.existsSync(dbJsonPath2);
+    results.dirname = __dn;
+  } catch (e) { results.fsError = e.message; }
   res.json(results);
 });
 
