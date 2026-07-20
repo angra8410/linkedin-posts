@@ -69,6 +69,9 @@ export default function BrandProfileTab({ profile, onProfileUpdate }: Props) {
         throw new Error(errData.error || `Server returned ${response.status}`);
       }
 
+      // Always cache to localStorage so data survives DB outages/deploys
+      localStorage.setItem('poster_profile_cache', JSON.stringify(updatedProfile));
+
       setSuccess(true);
       onProfileUpdate();
       setTimeout(() => setSuccess(false), 3000);

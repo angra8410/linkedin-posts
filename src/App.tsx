@@ -34,12 +34,28 @@ export default function App() {
     try {
       const response = await fetch('/api/profiles');
       const data = await response.json();
-      // Select the active profile — use passed settings or fall back to state
       const activeId = (currentSettings ?? settings)?.activeProfileId;
       const active = data.find((p: any) => p.id === activeId) || data[0] || null;
-      setProfile(active);
+      if (active) {
+        // Cache to localStorage whenever DB has data
+        localStorage.setItem('poster_profile_cache', JSON.stringify(active));
+        setProfile(active);
+      } else {
+        // DB returned empty — try localStorage cache
+        const cached = localStorage.getItem('poster_profile_cache');
+        if (cached) {
+          try { setProfile(JSON.parse(cached)); } catch { setProfile(null); }
+        } else {
+          setProfile(null);
+        }
+      }
     } catch (err) {
       console.error('Error fetching profiles:', err);
+      // Network error — try localStorage cache
+      const cached = localStorage.getItem('poster_profile_cache');
+      if (cached) {
+        try { setProfile(JSON.parse(cached)); } catch { setProfile(null); }
+      }
     }
   };
 
