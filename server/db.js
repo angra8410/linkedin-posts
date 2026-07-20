@@ -60,98 +60,80 @@ export async function initDB() {
       );
     `);
 
-    // 2. Check if seeding from db.json is needed
-    const { rows: profileRows } = await client.query('SELECT COUNT(*) FROM profiles');
-    const profileCount = parseInt(profileRows[0].count, 10);
+    const dbJsonPath = path.join(__dirname, 'db.json');
+    let dbJson = null;
+    if (fs.existsSync(dbJsonPath)) {
+      try {
+        dbJson = JSON.parse(fs.readFileSync(dbJsonPath, 'utf8'));
+      } catch (e) {
+        console.error('[PostgreSQL] Could not parse db.json:', e.message);
+      }
+    }
 
-    if (profileCount === 0) {
-      const dbJsonPath = path.join(__dirname, 'db.json');
-      if (fs.existsSync(dbJsonPath)) {
-        console.log('[PostgreSQL] Fresh database detected. Seeding from db.json...');
-        try {
-          const raw = fs.readFileSync(dbJsonPath, 'utf8');
-          const json = JSON.parse(raw);
+    if (dbJson) {
+      // ── Profiles: seed only if empty ──────────────────────────────────────
+      const { rows: profileRows } = await client.query('SELECT COUNT(*) FROM profiles');
+      if (parseInt(profileRows[0].count, 10) === 0 && Array.isArray(dbJson.profiles)) {
+        console.log('[PostgreSQL] Seeding profiles...');
+        for (const p of dbJson.profiles) {
+          await client.query(
+            `INSERT INTO profiles (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
+            [p.id, JSON.stringify(p)]
+          );
+        }
+      }
 
-          // Seed Profiles
-          if (Array.isArray(json.profiles)) {
-            for (const p of json.profiles) {
-              await client.query(
-                `INSERT INTO profiles (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
-                [p.id, JSON.stringify(p)]
-              );
-            }
-          }
+      // ── Drafts: seed only if empty ────────────────────────────────────────
+      const { rows: draftRows } = await client.query('SELECT COUNT(*) FROM drafts');
+      if (parseInt(draftRows[0].count, 10) === 0 && Array.isArray(dbJson.drafts)) {
+        console.log('[PostgreSQL] Seeding drafts...');
+        for (const d of dbJson.drafts) {
+          await client.query(
+            `INSERT INTO drafts (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
+            [d.id, JSON.stringify(d)]
+          );
+        }
+      }
 
-          // Seed Drafts
-          if (Array.isArray(json.drafts)) {
-            for (const d of json.drafts) {
-              await client.query(
-                `INSERT INTO drafts (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
-                [d.id, JSON.stringify(d)]
-              );
-            }
-          }
-
-          // Seed Logs
-          // Seed Logs (key is performanceLogs in db.json)
-          const logsKey = Array.isArray(json.performanceLogs) ? json.performanceLogs : (Array.isArray(json.logs) ? json.logs : []);
-          for (const l of logsKey) {
+      // ── Logs: seed only if empty (key is performanceLogs in db.json) ──────
+      const { rows: logRows } = await client.query('SELECT COUNT(*) FROM logs');
+      if (parseInt(logRows[0].count, 10) === 0) {
+        const logsData = Array.isArray(dbJson.performanceLogs)
+          ? dbJson.performanceLogs
+          : Array.isArray(dbJson.logs) ? dbJson.logs : [];
+        if (logsData.length > 0) {
+          console.log(`[PostgreSQL] Seeding ${logsData.length} performance logs...`);
+          for (const l of logsData) {
             await client.query(
               `INSERT INTO logs (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
               [l.id, JSON.stringify(l)]
             );
           }
-
-          // Seed Settings — merge db.json as base, but preserve live OAuth tokens from DB if they exist
-          if (json.settings) {
-            const { rows: existingSettings } = await client.query(`SELECT data FROM settings WHERE id = 'app'`);
-            const existing = existingSettings[0]?.data || {};
-            const merged = {
-              ...json.settings,
-              // Preserve live OAuth tokens from DB (they may be newer than db.json)
-              ...(existing.linkedinAccessToken ? {
-                linkedinAccessToken: existing.linkedinAccessToken,
-                linkedinMemberUrn: existing.linkedinMemberUrn,
-                linkedinTokenExpiresAt: existing.linkedinTokenExpiresAt,
-              } : {})
-            };
-            await client.query(
-              `INSERT INTO settings (id, data, updated_at) VALUES ('app', $1, NOW())
-               ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
-              [JSON.stringify(merged)]
-            );
-          }
-
-          console.log('[PostgreSQL] Seeding completed successfully!');
-        } catch (seedErr) {
-          console.error('[PostgreSQL] Error during db.json seeding:', seedErr);
         }
       }
 
-      // ── Seed logs table independently (may already exist from a prior run) ──
-      const { rows: logRows } = await client.query('SELECT COUNT(*) FROM logs');
-      const logCount = parseInt(logRows[0].count, 10);
-      if (logCount === 0) {
-        const dbJsonPath2 = path.join(__dirname, 'db.json');
-        if (fs.existsSync(dbJsonPath2)) {
-          try {
-            const raw2 = fs.readFileSync(dbJsonPath2, 'utf8');
-            const json2 = JSON.parse(raw2);
-            const logsKey2 = Array.isArray(json2.performanceLogs) ? json2.performanceLogs : (Array.isArray(json2.logs) ? json2.logs : []);
-            console.log(`[PostgreSQL] Seeding ${logsKey2.length} performance logs from db.json...`);
-            for (const l of logsKey2) {
-              await client.query(
-                `INSERT INTO logs (id, data, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (id) DO NOTHING`,
-                [l.id, JSON.stringify(l)]
-              );
-            }
-            console.log('[PostgreSQL] Log seeding completed.');
-          } catch (seedErr) {
-            console.error('[PostgreSQL] Error seeding logs:', seedErr);
-          }
-        }
+      // ── Settings: ALWAYS merge db.json as base, preserve live OAuth tokens ─
+      if (dbJson.settings) {
+        const { rows: existingSettings } = await client.query(`SELECT data FROM settings WHERE id = 'app'`);
+        const existing = existingSettings[0]?.data || {};
+        const merged = {
+          ...dbJson.settings,
+          // Preserve live OAuth tokens from DB (may be newer than db.json)
+          ...(existing.linkedinAccessToken ? {
+            linkedinAccessToken: existing.linkedinAccessToken,
+            linkedinMemberUrn: existing.linkedinMemberUrn,
+            linkedinTokenExpiresAt: existing.linkedinTokenExpiresAt,
+          } : {})
+        };
+        await client.query(
+          `INSERT INTO settings (id, data, updated_at) VALUES ('app', $1, NOW())
+           ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+          [JSON.stringify(merged)]
+        );
+        console.log('[PostgreSQL] Settings synced from db.json.');
       }
     }
+
   } finally {
     client.release();
   }
