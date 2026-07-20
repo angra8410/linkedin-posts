@@ -67,6 +67,25 @@ app.use('/api/linkedin/proxy-video-upload-chunk', express.raw({ type: 'applicati
 
 app.use(bodyParser.json({ limit: '10mb' }));
 
+// ── DEBUG (TEMP) ─────────────────────────────────────────────────────────────
+app.get('/api/debug', async (req, res) => {
+  const results = {};
+  try {
+    results.settings = await getSettings();
+  } catch (e) { results.settingsError = e.message; }
+  try {
+    const profiles = await getProfiles();
+    results.profileCount = profiles.length;
+    results.firstProfileId = profiles[0]?.id;
+  } catch (e) { results.profilesError = e.message; }
+  try {
+    const { pool } = await import('./db.js');
+    const { rows } = await pool.query('SELECT NOW() as time');
+    results.dbTime = rows[0]?.time;
+  } catch (e) { results.dbError = e.message; }
+  res.json(results);
+});
+
 // ── SETTINGS ─────────────────────────────────────────────────────────────────
 app.get('/api/settings', async (req, res) => {
   try { res.json(await getSettings()); }
