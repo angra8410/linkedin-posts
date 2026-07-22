@@ -70,8 +70,11 @@ app.use(bodyParser.json({ limit: '10mb' }));
 // ── DEBUG (TEMP) ─────────────────────────────────────────────────────────────
 const formatError = (e) => {
   if (!e) return "";
-  if (e instanceof AggregateError) {
-    return `AggregateError: ${e.message}. Inner errors: ${e.errors.map(err => err.message || err.toString()).join(' | ')}`;
+  if (e.name === 'AggregateError' || e.constructor?.name === 'AggregateError' || Array.isArray(e.errors)) {
+    const innerMsg = Array.isArray(e.errors)
+      ? e.errors.map(err => err.message || err.toString()).join(' | ')
+      : 'no inner errors array';
+    return `AggregateError: ${e.message || 'no message'}. Inner: ${innerMsg}`;
   }
   return e.toString();
 };
