@@ -83,8 +83,29 @@ app.get('/api/debug', async (req, res) => {
   const results = {};
   
   // Environment variables check (masked for security)
+  let dbUrlParsed = {};
+  if (process.env.DATABASE_URL) {
+    try {
+      const u = new URL(process.env.DATABASE_URL);
+      dbUrlParsed = {
+        protocol: u.protocol,
+        host: u.hostname,
+        port: u.port,
+        pathname: u.pathname,
+        username: u.username
+      };
+    } catch (parseErr) {
+      dbUrlParsed = { error: parseErr.message };
+    }
+  }
+
   results.env = {
     DATABASE_URL_present: !!process.env.DATABASE_URL,
+    DATABASE_URL_parsed: dbUrlParsed,
+    PGHOST: process.env.PGHOST,
+    PGPORT: process.env.PGPORT,
+    PGUSER: process.env.PGUSER,
+    PGDATABASE: process.env.PGDATABASE,
     LINKEDIN_CLIENT_ID_present: !!process.env.LINKEDIN_CLIENT_ID,
     LINKEDIN_CLIENT_ID_val: process.env.LINKEDIN_CLIENT_ID ? `${process.env.LINKEDIN_CLIENT_ID.slice(0, 4)}...${process.env.LINKEDIN_CLIENT_ID.slice(-4)}` : null,
     LINKEDIN_CLIENT_SECRET_present: !!process.env.LINKEDIN_CLIENT_SECRET,
