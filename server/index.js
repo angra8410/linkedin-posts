@@ -68,6 +68,14 @@ app.use('/api/linkedin/proxy-video-upload-chunk', express.raw({ type: 'applicati
 app.use(bodyParser.json({ limit: '10mb' }));
 
 // ── DEBUG (TEMP) ─────────────────────────────────────────────────────────────
+const formatError = (e) => {
+  if (!e) return "";
+  if (e instanceof AggregateError) {
+    return `AggregateError: ${e.message}. Inner errors: ${e.errors.map(err => err.message || err.toString()).join(' | ')}`;
+  }
+  return e.toString();
+};
+
 app.get('/api/debug', async (req, res) => {
   const results = {};
   
@@ -92,13 +100,13 @@ app.get('/api/debug', async (req, res) => {
       hasClientSecret: !!s.linkedinClientSecret,
       linkedinClientId: s.linkedinClientId ? `${s.linkedinClientId.slice(0, 4)}...` : null
     };
-  } catch (e) { results.settingsError = e.toString(); }
+  } catch (e) { results.settingsError = formatError(e); }
 
   try {
     const profiles = await getProfiles();
     results.profileCount = profiles.length;
     results.firstProfileId = profiles[0]?.id;
-  } catch (e) { results.profilesError = e.toString(); }
+  } catch (e) { results.profilesError = formatError(e); }
 
   try {
     const { pool } = await import('./db.js');
@@ -110,7 +118,7 @@ app.get('/api/debug', async (req, res) => {
     const { rows: sr } = await pool.query('SELECT COUNT(*) as c FROM settings');
     results.profileRowsInDB = parseInt(pr[0]?.c, 10);
     results.settingsRowsInDB = parseInt(sr[0]?.c, 10);
-  } catch (e) { results.dbError = e.toString(); }
+  } catch (e) { results.dbError = formatError(e); }
 
   try {
     const fs = await import('fs');
@@ -123,7 +131,7 @@ app.get('/api/debug', async (req, res) => {
     results.dbJsonPath1Exists = fs.default.existsSync(dbJsonPath);
     results.dbJsonPath2Exists = fs.default.existsSync(dbJsonPath2);
     results.dirname = __dn;
-  } catch (e) { results.fsError = e.toString(); }
+  } catch (e) { results.fsError = formatError(e); }
 
   res.json(results);
 });
