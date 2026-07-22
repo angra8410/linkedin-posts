@@ -70,25 +70,48 @@ app.use(bodyParser.json({ limit: '10mb' }));
 // ── DEBUG (TEMP) ─────────────────────────────────────────────────────────────
 app.get('/api/debug', async (req, res) => {
   const results = {};
+  
+  // Environment variables check (masked for security)
+  results.env = {
+    DATABASE_URL_present: !!process.env.DATABASE_URL,
+    LINKEDIN_CLIENT_ID_present: !!process.env.LINKEDIN_CLIENT_ID,
+    LINKEDIN_CLIENT_ID_val: process.env.LINKEDIN_CLIENT_ID ? `${process.env.LINKEDIN_CLIENT_ID.slice(0, 4)}...${process.env.LINKEDIN_CLIENT_ID.slice(-4)}` : null,
+    LINKEDIN_CLIENT_SECRET_present: !!process.env.LINKEDIN_CLIENT_SECRET,
+    LINKEDIN_CLIENT_SECRET_val: process.env.LINKEDIN_CLIENT_SECRET ? `${process.env.LINKEDIN_CLIENT_SECRET.slice(0, 4)}...` : null,
+    NODE_ENV: process.env.NODE_ENV
+  };
+
   try {
-    results.settings = await getSettings();
-  } catch (e) { results.settingsError = e.message; }
+    const s = await getSettings();
+    results.settings = {
+      theme: s.theme,
+      defaultModel: s.defaultModel,
+      activeProfileId: s.activeProfileId,
+      hasAccessToken: !!s.linkedinAccessToken,
+      hasClientId: !!s.linkedinClientId,
+      hasClientSecret: !!s.linkedinClientSecret,
+      linkedinClientId: s.linkedinClientId ? `${s.linkedinClientId.slice(0, 4)}...` : null
+    };
+  } catch (e) { results.settingsError = e.toString(); }
+
   try {
     const profiles = await getProfiles();
     results.profileCount = profiles.length;
     results.firstProfileId = profiles[0]?.id;
-  } catch (e) { results.profilesError = e.message; }
+  } catch (e) { results.profilesError = e.toString(); }
+
   try {
     const { pool } = await import('./db.js');
     const { rows } = await pool.query('SELECT NOW() as time, current_database() as db');
     results.dbTime = rows[0]?.time;
     results.dbName = rows[0]?.db;
-    // Check row counts directly
+    
     const { rows: pr } = await pool.query('SELECT COUNT(*) as c FROM profiles');
     const { rows: sr } = await pool.query('SELECT COUNT(*) as c FROM settings');
     results.profileRowsInDB = parseInt(pr[0]?.c, 10);
     results.settingsRowsInDB = parseInt(sr[0]?.c, 10);
-  } catch (e) { results.dbError = e.message; }
+  } catch (e) { results.dbError = e.toString(); }
+
   try {
     const fs = await import('fs');
     const path = await import('path');
@@ -100,7 +123,8 @@ app.get('/api/debug', async (req, res) => {
     results.dbJsonPath1Exists = fs.default.existsSync(dbJsonPath);
     results.dbJsonPath2Exists = fs.default.existsSync(dbJsonPath2);
     results.dirname = __dn;
-  } catch (e) { results.fsError = e.message; }
+  } catch (e) { results.fsError = e.toString(); }
+
   res.json(results);
 });
 
