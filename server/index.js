@@ -84,9 +84,11 @@ app.get('/api/debug', async (req, res) => {
   
   // Environment variables check (masked for security)
   let dbUrlParsed = {};
-  if (process.env.DATABASE_URL) {
+  const rawUrl = process.env.DATABASE_URL || "";
+  const rawUrlMasked = rawUrl.replace(/:([^:@]+)@/, ':***@');
+  if (rawUrl) {
     try {
-      const u = new URL(process.env.DATABASE_URL);
+      const u = new URL(rawUrl);
       dbUrlParsed = {
         protocol: u.protocol,
         host: u.hostname,
@@ -101,6 +103,7 @@ app.get('/api/debug', async (req, res) => {
 
   results.env = {
     DATABASE_URL_present: !!process.env.DATABASE_URL,
+    DATABASE_URL_raw_masked: rawUrlMasked,
     DATABASE_URL_parsed: dbUrlParsed,
     PGHOST: process.env.PGHOST,
     PGPORT: process.env.PGPORT,
