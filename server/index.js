@@ -84,7 +84,10 @@ app.get('/api/debug', async (req, res) => {
   
   // Environment variables check (masked for security)
   let dbUrlParsed = {};
-  const rawUrl = process.env.DATABASE_URL || "";
+  const rawUrl = process.env.DATABASE_URL || 
+                 process.env.POSTGRES_URL || 
+                 process.env.DATABASE_PRIVATE_URL || 
+                 process.env.POSTGRES_PRIVATE_URL || "";
   const rawUrlMasked = rawUrl.replace(/:([^:@]+)@/, ':***@');
   if (rawUrl) {
     try {
@@ -103,6 +106,9 @@ app.get('/api/debug', async (req, res) => {
 
   results.env = {
     DATABASE_URL_present: !!process.env.DATABASE_URL,
+    POSTGRES_URL_present: !!process.env.POSTGRES_URL,
+    DATABASE_PRIVATE_URL_present: !!process.env.DATABASE_PRIVATE_URL,
+    POSTGRES_PRIVATE_URL_present: !!process.env.POSTGRES_PRIVATE_URL,
     DATABASE_URL_raw_masked: rawUrlMasked,
     DATABASE_URL_parsed: dbUrlParsed,
     PGHOST: process.env.PGHOST,

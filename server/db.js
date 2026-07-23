@@ -7,7 +7,10 @@ const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const connectionString = process.env.DATABASE_URL || 
+                         process.env.POSTGRES_URL || 
+                         process.env.DATABASE_PRIVATE_URL || 
+                         process.env.POSTGRES_PRIVATE_URL;
 
 const poolConfig = connectionString
   ? {
