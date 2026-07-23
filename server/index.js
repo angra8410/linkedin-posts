@@ -411,10 +411,14 @@ app.post('/api/linkedin/finalize-video-upload', async (req, res) => {
 
 // ── LINKEDIN OAUTH ROUTES ─────────────────────────────────────────────────────
 const dbShim = {
-  get settings() { return this._settings || {}; },
-  set settings(v) { this._settings = v; },
+  get settings() { 
+    if (!this._settings) this._settings = {};
+    return this._settings; 
+  },
+  set settings(v) { this._settings = v || {}; },
   updateSettings: async (newData) => {
-    const current = await getSettings();
+    let current = {};
+    try { current = await getSettings(); } catch {}
     const updated = { ...current, ...newData };
     await saveSettings(updated);
     dbShim._settings = updated;
@@ -430,8 +434,20 @@ const dbShim = {
 })();
 
 const saveDbShim = async () => {
-  await saveSettings(dbShim._settings);
-  dbShim._settings = await getSettings();
+  const currentVal = dbShim._settings || {};
+  let dbVal = {};
+  try { dbVal = await getSettings(); } catch {}
+  
+  // Merge in-memory OAuth mutations with DB values safely
+  const merged = {
+    ...dbVal,
+    ...currentVal,
+    linkedinClientId: process.env.LINKEDIN_CLIENT_ID || currentVal.linkedinClientId || dbVal.linkedinClientId || '',
+    linkedinClientSecret: process.env.LINKEDIN_CLIENT_SECRET || currentVal.linkedinClientSecret || dbVal.linkedinClientSecret || '',
+  };
+
+  await saveSettings(merged);
+  dbShim._settings = merged;
 };
 
 setupLinkedInRoutes(app, dbShim, dbShim, saveDbShim);
@@ -920,8 +936,14 @@ if (existsSync(distPath)) {
 // Run initDB FIRST, then start listening — prevents race condition where
 // GET /api/profiles is called before seeding completes, returning empty arrays.
 initDB()
-  .then(() => {
+  .then(async () => {
     console.log('[PostgreSQL] Database ready — starting HTTP server...');
+    try {
+      dbShim._settings = await getSettings();
+      console.log('[PostgreSQL] Settings successfully pre-fetched on boot.');
+    } catch (e) {
+      console.warn('[PostgreSQL] Settings pre-fetch warning on boot:', e.message);
+    }
     app.listen(PORT, () => {
       console.log(`[Server] Poster.ai cloud running on port ${PORT}`);
     });
